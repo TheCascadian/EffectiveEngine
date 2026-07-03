@@ -662,9 +662,38 @@ export class DebugTools {
   toggleWireframe(show) {
     if (!this.world) return;
 
+    // WebGPU doesn't support wireframe property on standard materials
+    // We need to create wireframe materials for WebGPU
+    if (!this._wireframeMaterials) {
+      this._wireframeMaterials = new Map();
+    }
+    if (!this._originalMaterials) {
+      this._originalMaterials = new Map();
+    }
+
     this.world.loadedChunks.forEach((chunk) => {
       if (chunk.material) {
-        chunk.material.wireframe = show;
+        if (show) {
+          // Store original material if not already stored
+          if (!this._originalMaterials.has(chunk)) {
+            this._originalMaterials.set(chunk, chunk.material);
+          }
+          // Create or reuse wireframe material
+          if (!this._wireframeMaterials.has(chunk.material)) {
+            const wireframeMat = new THREE.MeshBasicMaterial({
+              color: 0xffffff,
+              wireframe: true,
+              vertexColors: chunk.material.vertexColors,
+            });
+            this._wireframeMaterials.set(chunk.material, wireframeMat);
+          }
+          chunk.material = this._wireframeMaterials.get(chunk.material);
+        } else {
+          // Restore original material
+          if (this._originalMaterials.has(chunk)) {
+            chunk.material = this._originalMaterials.get(chunk);
+          }
+        }
       }
     });
   }
@@ -949,6 +978,17 @@ export class DebugTools {
     }
     if (this.debugOverlay && this.debugOverlay.parentNode) {
       this.debugOverlay.parentNode.removeChild(this.debugOverlay);
+    }
+
+    // Clean up wireframe materials
+    if (this._wireframeMaterials) {
+      this._wireframeMaterials.forEach((material) => {
+        material.dispose();
+      });
+      this._wireframeMaterials.clear();
+    }
+    if (this._originalMaterials) {
+      this._originalMaterials.clear();
     }
 
     // Stop recording/playback
