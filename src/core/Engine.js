@@ -136,7 +136,7 @@ export class Engine {
       // Debug overlay with F4
       if (e.key === "F4" && this.debugTools) {
         const overlayVisible = this.debugTools.debugOverlay.style.display !== "none";
-        const panelVisible = this.debugTools.debugPanel.style.display !== "none";
+        const panelVisible = this.debugTools.gui.domElement.style.display !== "none";
         this.debugTools.debugOverlay.style.display = overlayVisible ? "none" : "block";
         // Only toggle stats panel if debug panel is not visible
         // If debug panel is visible, it already handles stats panel visibility
@@ -189,8 +189,8 @@ export class Engine {
 
   _toggleDebugPanel() {
     if (this.debugTools) {
-      const isVisible = this.debugTools.debugPanel.style.display !== "none";
-      this.debugTools.debugPanel.style.display = isVisible ? "none" : "block";
+      const isVisible = this.debugTools.gui.domElement.style.display !== "none";
+      this.debugTools.gui.domElement.style.display = isVisible ? "none" : "block";
       this.statsPanel.style.display = isVisible ? "block" : "none";
       this.debugTools.debugOverlay.style.display = isVisible ? "none" : "block";
     }

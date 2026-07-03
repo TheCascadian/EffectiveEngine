@@ -1,7 +1,8 @@
 import * as THREE from "three";
+import { GUI } from "lil-gui";
 
 /**
- * Comprehensive Debugging and Development Tools
+ * Comprehensive Debugging and Development Tools using lil-gui
  *
  * Features:
  * - Performance monitoring with detailed metrics
@@ -10,6 +11,7 @@ import * as THREE from "three";
  * - Lighting and shadow debugging
  * - Camera path recording and playback
  * - Memory usage tracking
+ * - Live terrain regeneration with debounced inputs
  * - Custom debug overlays
  */
 export class DebugTools {
@@ -26,10 +28,8 @@ export class DebugTools {
     this.performanceGraph = null;
     this.sceneGraph = null;
 
-    // Terrain regeneration state
-    this._terrainDirty = false;
-    this.terrainInputs = null;
-    this.terrainParams = null;
+    // GUI instance
+    this.gui = null;
 
     // Debug objects
     this.debugObjects = [];
@@ -60,6 +60,15 @@ export class DebugTools {
     this.pickPosition = null;
     this.pickMarker = null;
 
+    // Terrain regeneration state
+    this._terrainDirty = false;
+    this.terrainInputs = null;
+    this.terrainParams = null;
+
+    // Wireframe materials for WebGPU compatibility
+    this._wireframeMaterials = new Map();
+    this._originalMaterials = new Map();
+
     // Settings
     this.settings = {
       showStats: true,
@@ -86,25 +95,22 @@ export class DebugTools {
   }
 
   _initDebugUI() {
-    // Create debug panel container
-    this.debugPanel = document.createElement("div");
-    this.debugPanel.id = "debugPanel";
-    this.debugPanel.style.cssText = `
+    // Create GUI
+    this.gui = new GUI({ 
+      title: "EffectiveEngine Debug",
+      width: 320,
+      closeOnTop: true
+    });
+    
+    this.gui.domElement.id = "debugPanel";
+    this.gui.domElement.style.cssText = `
       position: absolute;
       top: 20px;
       right: 20px;
-      width: 300px;
-      background: rgba(0, 0, 0, 0.8);
-      border: 1px solid rgba(255, 255, 255, 0.2);
-      border-radius: 8px;
-      padding: 10px;
-      color: #fff;
-      font-family: 'Courier New', monospace;
-      font-size: 12px;
       z-index: 1000;
       display: none;
     `;
-    document.body.appendChild(this.debugPanel);
+    document.body.appendChild(this.gui.domElement);
 
     // Create debug overlay for quick info
     this.debugOverlay = document.createElement("div");
@@ -131,9 +137,8 @@ export class DebugTools {
     this.performanceGraph.id = "performanceGraph";
     this.performanceGraph.width = 300;
     this.performanceGraph.height = 150;
-    this.performanceGraph.style.cssText =
-      "width: 100%; height: 150px; background: #000; margin-top: 10px;";
-    this.debugPanel.appendChild(this.performanceGraph);
+    this.performanceGraph.style.cssText = "width: 100%; height: 150px; background: #000; margin-top: 10px; display: none;";
+    this.gui.domElement.appendChild(this.performanceGraph);
 
     // Create scene graph container
     this.sceneGraph = document.createElement("div");
@@ -148,540 +153,98 @@ export class DebugTools {
       font-size: 10px;
       display: none;
     `;
-    this.debugPanel.appendChild(this.sceneGraph);
+    this.gui.domElement.appendChild(this.sceneGraph);
 
-    // Add debug controls
-    this._createDebugControls();
+    // Add debug folders
+    this._createDebugFolders();
   }
 
-  _createDebugControls() {
-    const controls = document.createElement("div");
-    controls.style.cssText =
-      "margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.1);";
+  _createDebugFolders() {
+    // Visualization Folder
+    const vizFolder = this.gui.addFolder("Visualization");
+    vizFolder.add(this.settings, "showGrid").name("Show Grid").onChange((v) => this.toggleGrid(v));
+    vizFolder.add(this.settings, "showAxis").name("Show Axis").onChange((v) => this.toggleAxis(v));
+    vizFolder.add(this.settings, "showChunkBorders").name("Show Chunk Borders").onChange((v) => this.toggleChunkBorders(v));
+    vizFolder.add(this.settings, "showLODBorders").name("Show LOD Borders").onChange((v) => this.toggleLODBorders(v));
+    vizFolder.add(this.settings, "showLightHelpers").name("Show Light Helpers").onChange((v) => this.toggleLightHelpers(v));
+    vizFolder.add(this.settings, "showWireframe").name("Wireframe Mode").onChange((v) => this.toggleWireframe(v));
+    vizFolder.add(this.settings, "showBoundingBoxes").name("Show Bounding Boxes").onChange((v) => this.toggleBoundingBoxes(v));
 
-    // Toggle buttons
-    const toggleBtn = document.createElement("button");
-    toggleBtn.textContent = "Toggle Debug Panel";
-    toggleBtn.style.cssText =
-      "background: #333; color: #fff; border: none; padding: 5px 10px; margin: 2px; cursor: pointer; font-size: 11px;";
-    toggleBtn.addEventListener("click", () => {
-      this.debugPanel.style.display =
-        this.debugPanel.style.display === "none" ? "block" : "none";
+    // Performance Folder
+    const perfFolder = this.gui.addFolder("Performance");
+    perfFolder.add(this.settings, "showPerformanceGraph").name("Show Graph").onChange((v) => {
+      this.performanceGraph.style.display = v ? "block" : "none";
     });
-    controls.appendChild(toggleBtn);
-
-    const clearBtn = document.createElement("button");
-    clearBtn.textContent = "Clear Data";
-    clearBtn.style.cssText =
-      "background: #333; color: #fff; border: none; padding: 5px 10px; margin: 2px; cursor: pointer; font-size: 11px;";
-    clearBtn.addEventListener("click", () => this.clearPerformanceData());
-    controls.appendChild(clearBtn);
-
-    this.debugPanel.appendChild(controls);
-
-    // Add debug options
-    this._addDebugCheckbox("showGrid", "Show Grid", false);
-    this._addDebugCheckbox("showAxis", "Show Axis", false);
-    this._addDebugCheckbox("showChunkBorders", "Show Chunk Borders", false);
-    this._addDebugCheckbox("showLODBorders", "Show LOD Borders", false);
-    this._addDebugCheckbox("showLightHelpers", "Show Light Helpers", false);
-    this._addDebugCheckbox(
-      "showPerformanceGraph",
-      "Show Performance Graph",
-      false,
-    );
-    this._addDebugCheckbox("showSceneGraph", "Show Scene Graph", false);
-    this._addDebugCheckbox("showWireframe", "Wireframe Mode", false);
-    this._addDebugCheckbox("showBoundingBoxes", "Show Bounding Boxes", false);
-
-    // Lighting controls
-    const lightingDiv = document.createElement("div");
-    lightingDiv.style.cssText =
-      "margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.1);";
-    lightingDiv.innerHTML =
-      '<h3 style="margin: 0 0 10px 0; font-size: 12px; color: #0ff;">Lighting Controls</h3>';
-
-    const lightingToggle = document.createElement("div");
-    lightingToggle.style.cssText =
-      "display: flex; align-items: center; margin: 4px 0;";
-
-    const lightingCheckbox = document.createElement("input");
-    lightingCheckbox.type = "checkbox";
-    lightingCheckbox.id = "debug_lighting";
-    lightingCheckbox.checked = true;
-    lightingCheckbox.addEventListener("change", (e) => {
-      if (this.lighting) {
-        this.lighting.setEnabled(e.target.checked);
-      }
+    perfFolder.add(this.settings, "showSceneGraph").name("Show Scene Graph").onChange((v) => {
+      this.sceneGraph.style.display = v ? "block" : "none";
+      if (v) this.updateSceneGraph();
     });
+    perfFolder.add(this.settings, "maxPerformanceHistory").name("History Length").min(10).max(500).step(10);
 
-    const lightingLabel = document.createElement("label");
-    lightingLabel.textContent = "Enable Lighting";
-    lightingLabel.htmlFor = "debug_lighting";
-    lightingLabel.style.cssText =
-      "margin-left: 5px; font-size: 11px; color: #ccc;";
+    // Lighting Folder
+    if (this.lighting) {
+      const lightingFolder = this.gui.addFolder("Lighting");
+      lightingFolder.add(this.lighting, "enabled").name("Enable Lighting").onChange((v) => this.lighting.setEnabled(v));
+      lightingFolder.add(this.lighting, "skyboxEnabled").name("Enable Skybox").onChange((v) => this.lighting.setSkyboxEnabled(v));
+    }
 
-    lightingToggle.appendChild(lightingCheckbox);
-    lightingToggle.appendChild(lightingLabel);
-    lightingDiv.appendChild(lightingToggle);
+    // Camera Folder
+    const cameraFolder = this.gui.addFolder("Camera");
+    cameraFolder.add({ record: () => this.toggleRecording() }, "record").name("Start/Stop Recording");
+    cameraFolder.add({ play: () => this.togglePlayback() }, "play").name("Play/Stop Recording");
+    cameraFolder.add({ clear: () => this.clearCameraPath() }, "clear").name("Clear Path");
 
-    const skyboxToggle = document.createElement("div");
-    skyboxToggle.style.cssText =
-      "display: flex; align-items: center; margin: 4px 0;";
+    // Terrain Regeneration Folder
+    this._createTerrainRegenFolder();
 
-    const skyboxCheckbox = document.createElement("input");
-    skyboxCheckbox.type = "checkbox";
-    skyboxCheckbox.id = "debug_skybox";
-    skyboxCheckbox.checked = true;
-    skyboxCheckbox.addEventListener("change", (e) => {
-      if (this.lighting) {
-        this.lighting.setSkyboxEnabled(e.target.checked);
-      }
-    });
+    // Stats Folder
+    const statsFolder = this.gui.addFolder("Stats Display");
+    statsFolder.add(this.settings, "showFPS").name("Show FPS");
+    statsFolder.add(this.settings, "showMemory").name("Show Memory");
+    statsFolder.add(this.settings, "showDrawCalls").name("Show Draw Calls");
+    statsFolder.add(this.settings, "showTriangles").name("Show Triangles");
 
-    const skyboxLabel = document.createElement("label");
-    skyboxLabel.textContent = "Enable Skybox";
-    skyboxLabel.htmlFor = "debug_skybox";
-    skyboxLabel.style.cssText =
-      "margin-left: 5px; font-size: 11px; color: #ccc;";
-
-    skyboxToggle.appendChild(skyboxCheckbox);
-    skyboxToggle.appendChild(skyboxLabel);
-    lightingDiv.appendChild(skyboxToggle);
-
-    this.debugPanel.appendChild(lightingDiv);
-
-    // Camera controls
-    const cameraDiv = document.createElement("div");
-    cameraDiv.style.cssText =
-      "margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.1);";
-
-    const recordBtn = document.createElement("button");
-    recordBtn.textContent = "Start Recording";
-    recordBtn.id = "recordBtn";
-    recordBtn.style.cssText =
-      "background: #f00; color: #fff; border: none; padding: 5px 10px; margin: 2px; cursor: pointer; font-size: 11px;";
-    recordBtn.addEventListener("click", () => this.toggleRecording());
-    cameraDiv.appendChild(recordBtn);
-
-    const playBtn = document.createElement("button");
-    playBtn.textContent = "Play Recording";
-    playBtn.id = "playBtn";
-    playBtn.style.cssText =
-      "background: #0f0; color: #fff; border: none; padding: 5px 10px; margin: 2px; cursor: pointer; font-size: 11px;";
-    playBtn.addEventListener("click", () => this.togglePlayback());
-    cameraDiv.appendChild(playBtn);
-
-    const clearPathBtn = document.createElement("button");
-    clearPathBtn.textContent = "Clear Path";
-    clearPathBtn.style.cssText =
-      "background: #333; color: #fff; border: none; padding: 5px 10px; margin: 2px; cursor: pointer; font-size: 11px;";
-    clearPathBtn.addEventListener("click", () => this.clearCameraPath());
-    cameraDiv.appendChild(clearPathBtn);
-
-    this.debugPanel.appendChild(cameraDiv);
-
-    // Terrain Regeneration Panel
-    this._createTerrainRegenPanel();
+    // Add clear button
+    this.gui.add({ clear: () => this.clearPerformanceData() }, "clear").name("Clear Performance Data");
   }
 
-  _createTerrainRegenPanel() {
-    const terrainDiv = document.createElement("div");
-    terrainDiv.style.cssText = `
-      margin-top: 15px;
-      padding-top: 10px;
-      border-top: 1px solid rgba(255,255,255,0.1);
-    `;
-    terrainDiv.innerHTML = '<h3 style="margin: 0 0 10px 0; font-size: 12px; color: #0ff;">Terrain Regeneration</h3>';
-
-    // Chunk Size
-    const chunkSizeRow = document.createElement("div");
-    chunkSizeRow.style.cssText = "display: flex; align-items: center; margin: 4px 0;";
-    const chunkSizeLabel = document.createElement("label");
-    chunkSizeLabel.textContent = "Chunk Size:";
-    chunkSizeLabel.style.cssText = "font-size: 11px; color: #ccc; width: 100px;";
-    const chunkSizeInput = document.createElement("input");
-    chunkSizeInput.type = "number";
-    chunkSizeInput.id = "terrain_chunkSize";
-    chunkSizeInput.value = 32;
-    chunkSizeInput.min = "8";
-    chunkSizeInput.max = "128";
-    chunkSizeInput.style.cssText = "width: 60px; padding: 2px; font-size: 11px; background: #333; color: #fff; border: 1px solid #555;";
-    const chunkSizeValue = document.createElement("span");
-    chunkSizeValue.id = "terrain_chunkSize_value";
-    chunkSizeValue.textContent = "32";
-    chunkSizeValue.style.cssText = "margin-left: 5px; font-size: 11px; color: #0ff;";
-    chunkSizeRow.appendChild(chunkSizeLabel);
-    chunkSizeRow.appendChild(chunkSizeInput);
-    chunkSizeRow.appendChild(chunkSizeValue);
-    terrainDiv.appendChild(chunkSizeRow);
-
-    // Chunk Height
-    const chunkHeightRow = document.createElement("div");
-    chunkHeightRow.style.cssText = "display: flex; align-items: center; margin: 4px 0;";
-    const chunkHeightLabel = document.createElement("label");
-    chunkHeightLabel.textContent = "Chunk Height:";
-    chunkHeightLabel.style.cssText = "font-size: 11px; color: #ccc; width: 100px;";
-    const chunkHeightInput = document.createElement("input");
-    chunkHeightInput.type = "number";
-    chunkHeightInput.id = "terrain_chunkHeight";
-    chunkHeightInput.value = 1536;
-    chunkHeightInput.min = "64";
-    chunkHeightInput.max = "2048";
-    chunkHeightInput.style.cssText = "width: 60px; padding: 2px; font-size: 11px; background: #333; color: #fff; border: 1px solid #555;";
-    const chunkHeightValue = document.createElement("span");
-    chunkHeightValue.id = "terrain_chunkHeight_value";
-    chunkHeightValue.textContent = "1536";
-    chunkHeightValue.style.cssText = "margin-left: 5px; font-size: 11px; color: #0ff;";
-    chunkHeightRow.appendChild(chunkHeightLabel);
-    chunkHeightRow.appendChild(chunkHeightInput);
-    chunkHeightRow.appendChild(chunkHeightValue);
-    terrainDiv.appendChild(chunkHeightRow);
-
-    // Sea Level
-    const seaLevelRow = document.createElement("div");
-    seaLevelRow.style.cssText = "display: flex; align-items: center; margin: 4px 0;";
-    const seaLevelLabel = document.createElement("label");
-    seaLevelLabel.textContent = "Sea Level:";
-    seaLevelLabel.style.cssText = "font-size: 11px; color: #ccc; width: 100px;";
-    const seaLevelInput = document.createElement("input");
-    seaLevelInput.type = "number";
-    seaLevelInput.id = "terrain_seaLevel";
-    seaLevelInput.value = 60;
-    seaLevelInput.min = "0";
-    seaLevelInput.max = "1000";
-    seaLevelInput.style.cssText = "width: 60px; padding: 2px; font-size: 11px; background: #333; color: #fff; border: 1px solid #555;";
-    const seaLevelValue = document.createElement("span");
-    seaLevelValue.id = "terrain_seaLevel_value";
-    seaLevelValue.textContent = "60";
-    seaLevelValue.style.cssText = "margin-left: 5px; font-size: 11px; color: #0ff;";
-    seaLevelRow.appendChild(seaLevelLabel);
-    seaLevelRow.appendChild(seaLevelInput);
-    seaLevelRow.appendChild(seaLevelValue);
-    terrainDiv.appendChild(seaLevelRow);
-
-    // Full Detail Radius
-    const detailRadiusRow = document.createElement("div");
-    detailRadiusRow.style.cssText = "display: flex; align-items: center; margin: 4px 0;";
-    const detailRadiusLabel = document.createElement("label");
-    detailRadiusLabel.textContent = "Detail Radius:";
-    detailRadiusLabel.style.cssText = "font-size: 11px; color: #ccc; width: 100px;";
-    const detailRadiusInput = document.createElement("input");
-    detailRadiusInput.type = "number";
-    detailRadiusInput.id = "terrain_detailRadius";
-    detailRadiusInput.value = 6;
-    detailRadiusInput.min = "2";
-    detailRadiusInput.max = "20";
-    detailRadiusInput.style.cssText = "width: 60px; padding: 2px; font-size: 11px; background: #333; color: #fff; border: 1px solid #555;";
-    const detailRadiusValue = document.createElement("span");
-    detailRadiusValue.id = "terrain_detailRadius_value";
-    detailRadiusValue.textContent = "6";
-    detailRadiusValue.style.cssText = "margin-left: 5px; font-size: 11px; color: #0ff;";
-    detailRadiusRow.appendChild(detailRadiusLabel);
-    detailRadiusRow.appendChild(detailRadiusInput);
-    detailRadiusRow.appendChild(detailRadiusValue);
-    terrainDiv.appendChild(detailRadiusRow);
-
-    // Mountain Scale (0-1)
-    const mountainScaleRow = document.createElement("div");
-    mountainScaleRow.style.cssText = "display: flex; align-items: center; margin: 4px 0;";
-    const mountainScaleLabel = document.createElement("label");
-    mountainScaleLabel.textContent = "Mountain Scale:";
-    mountainScaleLabel.style.cssText = "font-size: 11px; color: #ccc; width: 100px;";
-    const mountainScaleInput = document.createElement("input");
-    mountainScaleInput.type = "range";
-    mountainScaleInput.id = "terrain_mountainScale";
-    mountainScaleInput.value = 0.45;
-    mountainScaleInput.min = "0.1";
-    mountainScaleInput.max = "1.0";
-    mountainScaleInput.step = "0.05";
-    mountainScaleInput.style.cssText = "width: 120px; padding: 2px; font-size: 11px; background: #333; color: #fff; border: 1px solid #555;";
-    const mountainScaleValue = document.createElement("span");
-    mountainScaleValue.id = "terrain_mountainScale_value";
-    mountainScaleValue.textContent = "0.45";
-    mountainScaleValue.style.cssText = "margin-left: 5px; font-size: 11px; color: #0ff;";
-    mountainScaleRow.appendChild(mountainScaleLabel);
-    mountainScaleRow.appendChild(mountainScaleInput);
-    mountainScaleRow.appendChild(mountainScaleValue);
-    terrainDiv.appendChild(mountainScaleRow);
-
-    // Peak Scale (0-1)
-    const peakScaleRow = document.createElement("div");
-    peakScaleRow.style.cssText = "display: flex; align-items: center; margin: 4px 0;";
-    const peakScaleLabel = document.createElement("label");
-    peakScaleLabel.textContent = "Peak Scale:";
-    peakScaleLabel.style.cssText = "font-size: 11px; color: #ccc; width: 100px;";
-    const peakScaleInput = document.createElement("input");
-    peakScaleInput.type = "range";
-    peakScaleInput.id = "terrain_peakScale";
-    peakScaleInput.value = 0.5;
-    peakScaleInput.min = "0.1";
-    peakScaleInput.max = "1.0";
-    peakScaleInput.step = "0.05";
-    peakScaleInput.style.cssText = "width: 120px; padding: 2px; font-size: 11px; background: #333; color: #fff; border: 1px solid #555;";
-    const peakScaleValue = document.createElement("span");
-    peakScaleValue.id = "terrain_peakScale_value";
-    peakScaleValue.textContent = "0.5";
-    peakScaleValue.style.cssText = "margin-left: 5px; font-size: 11px; color: #0ff;";
-    peakScaleRow.appendChild(peakScaleLabel);
-    peakScaleRow.appendChild(peakScaleInput);
-    peakScaleRow.appendChild(peakScaleValue);
-    terrainDiv.appendChild(peakScaleRow);
-
-    // Noise Frequency
-    const noiseFreqRow = document.createElement("div");
-    noiseFreqRow.style.cssText = "display: flex; align-items: center; margin: 4px 0;";
-    const noiseFreqLabel = document.createElement("label");
-    noiseFreqLabel.textContent = "Noise Frequency:";
-    noiseFreqLabel.style.cssText = "font-size: 11px; color: #ccc; width: 100px;";
-    const noiseFreqInput = document.createElement("input");
-    noiseFreqInput.type = "range";
-    noiseFreqInput.id = "terrain_noiseFreq";
-    noiseFreqInput.value = 0.002;
-    noiseFreqInput.min = "0.0005";
-    noiseFreqInput.max = "0.01";
-    noiseFreqInput.step = "0.0005";
-    noiseFreqInput.style.cssText = "width: 120px; padding: 2px; font-size: 11px; background: #333; color: #fff; border: 1px solid #555;";
-    const noiseFreqValue = document.createElement("span");
-    noiseFreqValue.id = "terrain_noiseFreq_value";
-    noiseFreqValue.textContent = "0.002";
-    noiseFreqValue.style.cssText = "margin-left: 5px; font-size: 11px; color: #0ff;";
-    noiseFreqRow.appendChild(noiseFreqLabel);
-    noiseFreqRow.appendChild(noiseFreqInput);
-    noiseFreqRow.appendChild(noiseFreqValue);
-    terrainDiv.appendChild(noiseFreqRow);
-
-    // Regenerate Button
-    const regenBtn = document.createElement("button");
-    regenBtn.textContent = "Regenerate Terrain";
-    regenBtn.id = "terrain_regenBtn";
-    regenBtn.style.cssText = `
-      background: #0f0;
-      color: #000;
-      border: none;
-      padding: 8px 12px;
-      margin-top: 10px;
-      cursor: pointer;
-      font-size: 11px;
-      font-weight: bold;
-      width: 100%;
-    `;
-    regenBtn.addEventListener("click", () => this.regenerateTerrain());
-    terrainDiv.appendChild(regenBtn);
-
-    // Status message
-    const statusDiv = document.createElement("div");
-    statusDiv.id = "terrain_status";
-    statusDiv.textContent = "Ready";
-    statusDiv.style.cssText = "margin-top: 5px; font-size: 10px; color: #0f0; text-align: center;";
-    terrainDiv.appendChild(statusDiv);
-
-    this.debugPanel.appendChild(terrainDiv);
-
-    // Store references
-    this.terrainInputs = {
-      chunkSize: chunkSizeInput,
-      chunkHeight: chunkHeightInput,
-      seaLevel: seaLevelInput,
-      detailRadius: detailRadiusInput,
-      mountainScale: mountainScaleInput,
-      peakScale: peakScaleInput,
-      noiseFreq: noiseFreqInput,
-      status: statusDiv
+  _createTerrainRegenFolder() {
+    const terrainFolder = this.gui.addFolder("Terrain Regeneration");
+    
+    // Store terrain parameters in a dedicated object for lil-gui
+    this.terrainConfig = {
+      chunkSize: 32,
+      chunkHeight: 1536,
+      seaLevel: 60,
+      detailRadius: 6,
+      mountainScale: 0.45,
+      peakScale: 0.5,
+      noiseFreq: 0.002,
+      regenerate: () => this.regenerateTerrain()
     };
 
-    // Set up debounced input handlers
-    this._setupTerrainInputHandlers();
-  }
-
-  _setupTerrainInputHandlers() {
-    const inputs = this.terrainInputs;
-    
-    // Debounce function
-    const debounce = (func, wait) => {
-      let timeout;
-      return (...args) => {
-        clearTimeout(timeout);
-        timeout = setTimeout(() => func.apply(this, args), wait);
-      };
-    };
-
-    // Update value displays and mark for regeneration
-    const updateValue = (inputId, valueId) => {
-      const input = document.getElementById(inputId);
-      const value = document.getElementById(valueId);
-      if (input && value) {
-        value.textContent = input.value;
-        this._terrainDirty = true;
-        inputs.status.textContent = "Pending regeneration...";
-        inputs.status.style.color = "#ff0";
-      }
-    };
-
-    // Add debounced input listeners
-    inputs.chunkSize.addEventListener("input", debounce(() => {
-      updateValue("terrain_chunkSize", "terrain_chunkSize_value");
-    }, 500));
-
-    inputs.chunkHeight.addEventListener("input", debounce(() => {
-      updateValue("terrain_chunkHeight", "terrain_chunkHeight_value");
-    }, 500));
-
-    inputs.seaLevel.addEventListener("input", debounce(() => {
-      updateValue("terrain_seaLevel", "terrain_seaLevel_value");
-    }, 500));
-
-    inputs.detailRadius.addEventListener("input", debounce(() => {
-      updateValue("terrain_detailRadius", "terrain_detailRadius_value");
-    }, 500));
-
-    inputs.mountainScale.addEventListener("input", debounce(() => {
-      updateValue("terrain_mountainScale", "terrain_mountainScale_value");
-    }, 500));
-
-    inputs.peakScale.addEventListener("input", debounce(() => {
-      updateValue("terrain_peakScale", "terrain_peakScale_value");
-    }, 500));
-
-    inputs.noiseFreq.addEventListener("input", debounce(() => {
-      updateValue("terrain_noiseFreq", "terrain_noiseFreq_value");
-    }, 500));
-  }
-
-  regenerateTerrain() {
-    if (!this.world) {
-      this.terrainInputs.status.textContent = "Error: World not initialized";
-      this.terrainInputs.status.style.color = "#f00";
-      return;
-    }
-
-    const inputs = this.terrainInputs;
-    
-    // Get values from inputs
-    const chunkSize = parseInt(inputs.chunkSize.value) || 32;
-    const chunkHeight = parseInt(inputs.chunkHeight.value) || 1536;
-    const seaLevel = parseInt(inputs.seaLevel.value) || 60;
-    const detailRadius = parseInt(inputs.detailRadius.value) || 6;
-    const mountainScale = parseFloat(inputs.mountainScale.value) || 0.45;
-    const peakScale = parseFloat(inputs.peakScale.value) || 0.5;
-    const noiseFreq = parseFloat(inputs.noiseFreq.value) || 0.002;
-
-    // Update CONFIG values
-    CONFIG.CHUNK_SIZE = chunkSize;
-    CONFIG.CHUNK_HEIGHT = chunkHeight;
-    CONFIG.SEA_LEVEL = seaLevel;
-    CONFIG.FULL_DETAIL_RADIUS = detailRadius;
-    
-    // Store terrain parameters for worker (these will be passed via mesher)
-    if (!this.terrainParams) {
-      this.terrainParams = {};
-    }
-    this.terrainParams.mountainScale = mountainScale;
-    this.terrainParams.peakScale = peakScale;
-    this.terrainParams.noiseFreq = noiseFreq;
-
-    // Update LOD rings based on new detail radius
-    let currentRadius = detailRadius;
-    for (let i = 0; i < CONFIG.LOD_RINGS.length; i++) {
-      currentRadius += detailRadius * Math.pow(2, i);
-      CONFIG.LOD_RINGS[i].radius = currentRadius;
-    }
-
-    // Update camera far plane and fog
-    if (this.camera) {
-      const maxDistUnits = CONFIG.LOD_RINGS[CONFIG.LOD_RINGS.length - 1].radius * CONFIG.CHUNK_SIZE;
-      if (this.scene.fog) this.scene.fog.far = maxDistUnits;
-      this.camera.far = maxDistUnits + 1000;
-      this.camera.updateProjectionMatrix();
-    }
-
-    // Pass terrain parameters to mesher
-    if (this.world && this.world.mesher) {
-      this.world.mesher.setTerrainParams(this.terrainParams);
-    }
-
-    // Reset the world to regenerate with new parameters
-    inputs.status.textContent = "Regenerating terrain...";
-    inputs.status.style.color = "#0ff";
-    
-    this.world.reset();
-    
-    // Force camera update to trigger chunk loading
-    if (this.camera) {
-      this.world.update(this.camera.position, this.camera.getWorldDirection(new THREE.Vector3()));
-    }
-
-    // Clear dirty flag
-    this._terrainDirty = false;
-
-    // Update status after a short delay
-    setTimeout(() => {
-      inputs.status.textContent = "Terrain regenerated!";
-      inputs.status.style.color = "#0f0";
-      setTimeout(() => {
-        inputs.status.textContent = "Ready";
-        inputs.status.style.color = "#0ff";
-      }, 2000);
-    }, 100);
-  }
-
-  _addDebugCheckbox(setting, label, defaultValue) {
-    const container = document.createElement("div");
-    container.style.cssText =
-      "display: flex; align-items: center; margin: 2px 0;";
-
-    const checkbox = document.createElement("input");
-    checkbox.type = "checkbox";
-    checkbox.id = `debug_${setting}`;
-    checkbox.checked = defaultValue;
-    checkbox.addEventListener("change", (e) => {
-      this.settings[setting] = e.target.checked;
-      this._onSettingChanged(setting, e.target.checked);
+    terrainFolder.add(this.terrainConfig, "chunkSize").name("Chunk Size").min(8).max(128).step(1).onChange(() => {
+      this._terrainDirty = true;
     });
-
-    const labelEl = document.createElement("label");
-    labelEl.textContent = label;
-    labelEl.htmlFor = `debug_${setting}`;
-    labelEl.style.cssText = "margin-left: 5px; font-size: 11px;";
-
-    container.appendChild(checkbox);
-    container.appendChild(labelEl);
-    this.debugPanel.appendChild(container);
-
-    this.settings[setting] = defaultValue;
-  }
-
-  _onSettingChanged(setting, value) {
-    switch (setting) {
-      case "showGrid":
-        this.toggleGrid(value);
-        break;
-      case "showAxis":
-        this.toggleAxis(value);
-        break;
-      case "showChunkBorders":
-        this.toggleChunkBorders(value);
-        break;
-      case "showLODBorders":
-        this.toggleLODBorders(value);
-        break;
-      case "showLightHelpers":
-        this.toggleLightHelpers(value);
-        break;
-      case "showPerformanceGraph":
-        this.performanceGraph.style.display = value ? "block" : "none";
-        break;
-      case "showSceneGraph":
-        this.sceneGraph.style.display = value ? "block" : "none";
-        if (value) this.updateSceneGraph();
-        break;
-      case "showWireframe":
-        this.toggleWireframe(value);
-        break;
-      case "showBoundingBoxes":
-        this.toggleBoundingBoxes(value);
-        break;
-    }
+    terrainFolder.add(this.terrainConfig, "chunkHeight").name("Chunk Height").min(64).max(2048).step(64).onChange(() => {
+      this._terrainDirty = true;
+    });
+    terrainFolder.add(this.terrainConfig, "seaLevel").name("Sea Level").min(0).max(1000).step(1).onChange(() => {
+      this._terrainDirty = true;
+    });
+    terrainFolder.add(this.terrainConfig, "detailRadius").name("Detail Radius").min(2).max(20).step(1).onChange(() => {
+      this._terrainDirty = true;
+    });
+    terrainFolder.add(this.terrainConfig, "mountainScale").name("Mountain Scale").min(0.1).max(1.0).step(0.05).onChange(() => {
+      this._terrainDirty = true;
+    });
+    terrainFolder.add(this.terrainConfig, "peakScale").name("Peak Scale").min(0.1).max(1.0).step(0.05).onChange(() => {
+      this._terrainDirty = true;
+    });
+    terrainFolder.add(this.terrainConfig, "noiseFreq").name("Noise Frequency").min(0.0005).max(0.01).step(0.0005).onChange(() => {
+      this._terrainDirty = true;
+    });
+    terrainFolder.add(this.terrainConfig, "regenerate").name("Regenerate Terrain");
   }
 
   _initDebugObjects() {
@@ -1012,13 +575,6 @@ export class DebugTools {
 
     // WebGPU doesn't support wireframe property on standard materials
     // We need to create wireframe materials for WebGPU
-    if (!this._wireframeMaterials) {
-      this._wireframeMaterials = new Map();
-    }
-    if (!this._originalMaterials) {
-      this._originalMaterials = new Map();
-    }
-
     this.world.loadedChunks.forEach((chunk) => {
       if (chunk.material) {
         if (show) {
@@ -1081,17 +637,71 @@ export class DebugTools {
     }
   }
 
+  // Terrain Regeneration
+  regenerateTerrain() {
+    if (!this.world) {
+      console.error("Error: World not initialized");
+      return;
+    }
+
+    const config = this.terrainConfig;
+    
+    // Get values from inputs
+    const chunkSize = parseInt(config.chunkSize) || 32;
+    const chunkHeight = parseInt(config.chunkHeight) || 1536;
+    const seaLevel = parseInt(config.seaLevel) || 60;
+    const detailRadius = parseInt(config.detailRadius) || 6;
+    const mountainScale = parseFloat(config.mountainScale) || 0.45;
+    const peakScale = parseFloat(config.peakScale) || 0.5;
+    const noiseFreq = parseFloat(config.noiseFreq) || 0.002;
+
+    // Update CONFIG values
+    CONFIG.CHUNK_SIZE = chunkSize;
+    CONFIG.CHUNK_HEIGHT = chunkHeight;
+    CONFIG.SEA_LEVEL = seaLevel;
+    CONFIG.FULL_DETAIL_RADIUS = detailRadius;
+
+    // Update LOD rings based on new detail radius
+    let currentRadius = detailRadius;
+    for (let i = 0; i < CONFIG.LOD_RINGS.length; i++) {
+      currentRadius += detailRadius * Math.pow(2, i);
+      CONFIG.LOD_RINGS[i].radius = currentRadius;
+    }
+
+    // Update camera far plane and fog
+    if (this.camera) {
+      const maxDistUnits = CONFIG.LOD_RINGS[CONFIG.LOD_RINGS.length - 1].radius * CONFIG.CHUNK_SIZE;
+      if (this.scene.fog) this.scene.fog.far = maxDistUnits;
+      this.camera.far = maxDistUnits + 1000;
+      this.camera.updateProjectionMatrix();
+    }
+
+    // Pass terrain parameters to mesher
+    if (this.world && this.world.mesher) {
+      this.world.mesher.setTerrainParams({
+        mountainScale,
+        peakScale,
+        noiseFreq
+      });
+    }
+
+    // Reset the world to regenerate with new parameters
+    this.world.reset();
+    
+    // Force camera update to trigger chunk loading
+    if (this.camera) {
+      this.world.update(this.camera.position, this.camera.getWorldDirection(new THREE.Vector3()));
+    }
+
+    // Clear dirty flag
+    this._terrainDirty = false;
+
+    console.log("Terrain regenerated with new parameters");
+  }
+
   // Camera recording and playback
   toggleRecording() {
     this.isRecording = !this.isRecording;
-
-    const recordBtn = document.getElementById("recordBtn");
-    if (recordBtn) {
-      recordBtn.textContent = this.isRecording
-        ? "Stop Recording"
-        : "Start Recording";
-      recordBtn.style.background = this.isRecording ? "#f00" : "#333";
-    }
 
     if (this.isRecording) {
       this.cameraPath = [];
@@ -1126,12 +736,6 @@ export class DebugTools {
     }
 
     this.isPlaying = !this.isPlaying;
-
-    const playBtn = document.getElementById("playBtn");
-    if (playBtn) {
-      playBtn.textContent = this.isPlaying ? "Stop Playback" : "Play Recording";
-      playBtn.style.background = this.isPlaying ? "#0f0" : "#333";
-    }
 
     if (this.isPlaying) {
       this.playbackIndex = 0;
@@ -1191,18 +795,6 @@ export class DebugTools {
     this.playbackIndex = 0;
     this._stopRecording();
     this._stopPlayback();
-
-    const playBtn = document.getElementById("playBtn");
-    if (playBtn) {
-      playBtn.textContent = "Play Recording";
-      playBtn.style.background = "#333";
-    }
-
-    const recordBtn = document.getElementById("recordBtn");
-    if (recordBtn) {
-      recordBtn.textContent = "Start Recording";
-      recordBtn.style.background = "#333";
-    }
   }
 
   // Object picking
@@ -1320,14 +912,6 @@ export class DebugTools {
     if (this.axisHelper) this.scene.remove(this.axisHelper);
     if (this.pickMarker) this.scene.remove(this.pickMarker);
 
-    // Clean up UI
-    if (this.debugPanel && this.debugPanel.parentNode) {
-      this.debugPanel.parentNode.removeChild(this.debugPanel);
-    }
-    if (this.debugOverlay && this.debugOverlay.parentNode) {
-      this.debugOverlay.parentNode.removeChild(this.debugOverlay);
-    }
-
     // Clean up wireframe materials
     if (this._wireframeMaterials) {
       this._wireframeMaterials.forEach((material) => {
@@ -1337,6 +921,22 @@ export class DebugTools {
     }
     if (this._originalMaterials) {
       this._originalMaterials.clear();
+    }
+
+    // Clean up GUI
+    if (this.gui) {
+      this.gui.destroy();
+      if (this.gui.domElement && this.gui.domElement.parentNode) {
+        this.gui.domElement.parentNode.removeChild(this.gui.domElement);
+      }
+    }
+
+    // Clean up UI
+    if (this.debugPanel && this.debugPanel.parentNode) {
+      this.debugPanel.parentNode.removeChild(this.debugPanel);
+    }
+    if (this.debugOverlay && this.debugOverlay.parentNode) {
+      this.debugOverlay.parentNode.removeChild(this.debugOverlay);
     }
 
     // Stop recording/playback

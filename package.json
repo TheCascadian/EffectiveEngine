@@ -16,5 +16,8 @@
   "bugs": {
     "url": "https://github.com/TheCascadian/EffectiveEngine/issues"
   },
-  "homepage": "https://github.com/TheCascadian/EffectiveEngine#readme"
+  "homepage": "https://github.com/TheCascadian/EffectiveEngine#readme",
+  "dependencies": {
+    "lil-gui": "^0.21.0"
+  }
 }
