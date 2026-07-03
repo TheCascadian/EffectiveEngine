@@ -2,7 +2,6 @@ import * as THREE from "three";
 
 /**
  * Advanced Skybox System with:
- * - HDRI-based environment mapping
  * - Dynamic sky dome with sun/moon
  * - Atmospheric scattering simulation
  * - Weather effects (optional)
@@ -41,11 +40,27 @@ export class Skybox {
     this._timeOfDay = 0; // 0-1 representing 24-hour cycle
     this._weatherType = 'clear'; // clear, cloudy, rainy, stormy
     this._weatherIntensity = 0;
+    this._enabled = true;
     
     this._initSkyDome();
     this._initCelestialBodies();
     this._initStars();
     this._initClouds();
+  }
+  
+  setEnabled(enabled) {
+    this._enabled = enabled;
+    if (this.skyDome) this.skyDome.visible = enabled;
+    if (this.sunMesh) this.sunMesh.visible = enabled;
+    if (this.moonMesh) this.moonMesh.visible = enabled;
+    if (this.starsMesh) this.starsMesh.visible = enabled;
+    if (this.cloudGroup) this.cloudGroup.visible = enabled;
+    if (this.sunLight) this.sunLight.visible = enabled;
+    if (this.moonLight) this.moonLight.visible = enabled;
+  }
+  
+  isEnabled() {
+    return this._enabled;
   }
   
   _initSkyDome() {
@@ -133,40 +148,41 @@ export class Skybox {
     
     this.skyDome = new THREE.Mesh(geometry, material);
     this.skyDome.rotation.order = 'XZY';
+    this.skyDome.visible = this._enabled;
     this.scene.add(this.skyDome);
   }
   
   _initCelestialBodies() {
-    // Sun geometry with emissive material
+    // Sun geometry with basic material (no emissive properties)
     const sunGeometry = new THREE.SphereGeometry(this.config.sunSize, 16, 16);
     const sunMaterial = new THREE.MeshBasicMaterial({
-      color: 0xffeeaa,
-      emissive: 0xffeeaa,
-      emissiveIntensity: 2.0
+      color: 0xffeeaa
     });
     this.sunMesh = new THREE.Mesh(sunGeometry, sunMaterial);
     this.sunMesh.castShadow = false;
     this.sunMesh.receiveShadow = false;
+    this.sunMesh.visible = this._enabled;
     this.scene.add(this.sunMesh);
     
     // Moon geometry
     const moonGeometry = new THREE.SphereGeometry(this.config.moonSize, 16, 16);
     const moonMaterial = new THREE.MeshBasicMaterial({
-      color: 0xaaaaee,
-      emissive: 0xaaaaee,
-      emissiveIntensity: 0.5
+      color: 0xaaaaee
     });
     this.moonMesh = new THREE.Mesh(moonGeometry, moonMaterial);
     this.moonMesh.castShadow = false;
     this.moonMesh.receiveShadow = false;
+    this.moonMesh.visible = this._enabled;
     this.scene.add(this.moonMesh);
     
     // Add point light for sun
     this.sunLight = new THREE.PointLight(0xffeeaa, 0.5, this.config.skyDomeRadius * 0.5);
+    this.sunLight.visible = this._enabled;
     this.scene.add(this.sunLight);
     
     // Add point light for moon
     this.moonLight = new THREE.PointLight(0xaaaaee, 0.2, this.config.skyDomeRadius * 0.3);
+    this.moonLight.visible = this._enabled;
     this.scene.add(this.moonLight);
   }
   
@@ -211,12 +227,14 @@ export class Skybox {
     });
     
     this.starsMesh = new THREE.Points(starGeometry, starMaterial);
+    this.starsMesh.visible = this._enabled;
     this.scene.add(this.starsMesh);
   }
   
   _initClouds() {
     // Create cloud particle system
     this.cloudGroup = new THREE.Group();
+    this.cloudGroup.visible = this._enabled;
     this.scene.add(this.cloudGroup);
     
     // Generate cloud particles
@@ -244,6 +262,8 @@ export class Skybox {
   }
   
   update(timeOfDay, delta, playerPosition) {
+    if (!this._enabled) return;
+    
     this._timeOfDay = timeOfDay;
     
     // Update sun position (60-minute day cycle)
@@ -325,8 +345,8 @@ export class Skybox {
     const sunVisibility = Math.min(1, Math.max(0, 1 - Math.pow(timeOfDay * 2, 2)));
     const moonVisibility = Math.min(1, Math.pow((timeOfDay - 0.5) * 2, 2));
     
-    this.sunMesh.visible = sunVisibility > 0.01;
-    this.moonMesh.visible = moonVisibility > 0.01;
+    this.sunMesh.visible = this._enabled && sunVisibility > 0.01;
+    this.moonMesh.visible = this._enabled && moonVisibility > 0.01;
     this.sunLight.intensity = this.config.sunIntensity * sunVisibility;
     this.moonLight.intensity = this.config.moonIntensity * moonVisibility;
     

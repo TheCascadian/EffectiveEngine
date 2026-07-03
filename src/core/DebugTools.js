@@ -63,11 +63,9 @@ export class DebugTools {
       showChunkBorders: false,
       showLODBorders: false,
       showLightHelpers: false,
-      showShadowCascades: false,
       showPerformanceGraph: false,
       showSceneGraph: false,
       showWireframe: false,
-      showNormals: false,
       showBoundingBoxes: false,
       showFPS: true,
       showMemory: true,
@@ -119,6 +117,7 @@ export class DebugTools {
       font-size: 11px;
       z-index: 1000;
       line-height: 1.4;
+      display: none;
     `;
     document.body.appendChild(this.debugOverlay);
     
@@ -176,11 +175,61 @@ export class DebugTools {
     this._addDebugCheckbox('showChunkBorders', 'Show Chunk Borders', false);
     this._addDebugCheckbox('showLODBorders', 'Show LOD Borders', false);
     this._addDebugCheckbox('showLightHelpers', 'Show Light Helpers', false);
-    this._addDebugCheckbox('showShadowCascades', 'Show Shadow Cascades', false);
     this._addDebugCheckbox('showPerformanceGraph', 'Show Performance Graph', false);
     this._addDebugCheckbox('showSceneGraph', 'Show Scene Graph', false);
     this._addDebugCheckbox('showWireframe', 'Wireframe Mode', false);
     this._addDebugCheckbox('showBoundingBoxes', 'Show Bounding Boxes', false);
+    
+    // Lighting controls
+    const lightingDiv = document.createElement('div');
+    lightingDiv.style.cssText = 'margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.1);';
+    lightingDiv.innerHTML = '<h3 style="margin: 0 0 10px 0; font-size: 12px; color: #0ff;">Lighting Controls</h3>';
+    
+    const lightingToggle = document.createElement('div');
+    lightingToggle.style.cssText = 'display: flex; align-items: center; margin: 4px 0;';
+    
+    const lightingCheckbox = document.createElement('input');
+    lightingCheckbox.type = 'checkbox';
+    lightingCheckbox.id = 'debug_lighting';
+    lightingCheckbox.checked = true;
+    lightingCheckbox.addEventListener('change', (e) => {
+      if (this.lighting) {
+        this.lighting.setEnabled(e.target.checked);
+      }
+    });
+    
+    const lightingLabel = document.createElement('label');
+    lightingLabel.textContent = 'Enable Lighting';
+    lightingLabel.htmlFor = 'debug_lighting';
+    lightingLabel.style.cssText = 'margin-left: 5px; font-size: 11px; color: #ccc;';
+    
+    lightingToggle.appendChild(lightingCheckbox);
+    lightingToggle.appendChild(lightingLabel);
+    lightingDiv.appendChild(lightingToggle);
+    
+    const skyboxToggle = document.createElement('div');
+    skyboxToggle.style.cssText = 'display: flex; align-items: center; margin: 4px 0;';
+    
+    const skyboxCheckbox = document.createElement('input');
+    skyboxCheckbox.type = 'checkbox';
+    skyboxCheckbox.id = 'debug_skybox';
+    skyboxCheckbox.checked = true;
+    skyboxCheckbox.addEventListener('change', (e) => {
+      if (this.lighting) {
+        this.lighting.setSkyboxEnabled(e.target.checked);
+      }
+    });
+    
+    const skyboxLabel = document.createElement('label');
+    skyboxLabel.textContent = 'Enable Skybox';
+    skyboxLabel.htmlFor = 'debug_skybox';
+    skyboxLabel.style.cssText = 'margin-left: 5px; font-size: 11px; color: #ccc;';
+    
+    skyboxToggle.appendChild(skyboxCheckbox);
+    skyboxToggle.appendChild(skyboxLabel);
+    lightingDiv.appendChild(skyboxToggle);
+    
+    this.debugPanel.appendChild(lightingDiv);
     
     // Camera controls
     const cameraDiv = document.createElement('div');
@@ -251,9 +300,6 @@ export class DebugTools {
       case 'showLightHelpers':
         this.toggleLightHelpers(value);
         break;
-      case 'showShadowCascades':
-        this.toggleShadowCascades(value);
-        break;
       case 'showPerformanceGraph':
         this.performanceGraph.style.display = value ? 'block' : 'none';
         break;
@@ -307,7 +353,7 @@ export class DebugTools {
     this._lastFrameTime = now;
     
     // Collect performance data
-    this._collectPerformanceData(delta);
+    this._collectPerformanceData(delta, now);
     
     // Update debug overlay
     this._updateDebugOverlay();
@@ -321,7 +367,7 @@ export class DebugTools {
     requestAnimationFrame(() => this._performanceLoop());
   }
   
-  _collectPerformanceData(delta) {
+  _collectPerformanceData(delta, now) {
     // FPS
     this._frameCount++;
     if (now - this._fpsUpdateTime >= 1000) {
@@ -559,24 +605,6 @@ export class DebugTools {
         }
       });
       this.debugObjects = this.debugObjects.filter(obj => !obj.isLightHelper);
-    }
-  }
-  
-  toggleShadowCascades(show) {
-    if (!this.lighting || !this.lighting.sunLight) return;
-    
-    if (show) {
-      const light = this.lighting.sunLight;
-      if (light.shadow && !light.shadowCameraHelper) {
-        light.shadowCameraHelper = new THREE.CameraHelper(light.shadow.camera);
-        this.scene.add(light.shadowCameraHelper);
-        this.debugObjects.push(light.shadowCameraHelper);
-      }
-    } else {
-      if (this.lighting.sunLight && this.lighting.sunLight.shadowCameraHelper) {
-        this.scene.remove(this.lighting.sunLight.shadowCameraHelper);
-        this.lighting.sunLight.shadowCameraHelper = null;
-      }
     }
   }
   

@@ -130,12 +130,12 @@ export class Engine {
 
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape") this._togglePause();
-      // Debug toggle with F1
-      if (e.key === "F1") this._toggleDebugPanel();
-      // Debug pick with F2
-      if (e.key === "F2" && this.debugTools) {
-        this.debugTools.debugPanel.style.display = 
-          this.debugTools.debugPanel.style.display === "none" ? "block" : "none";
+      // Debug toggle with F3 (F1 opens help in Edge)
+      if (e.key === "F3") this._toggleDebugPanel();
+      // Debug overlay with F4
+      if (e.key === "F4" && this.debugTools) {
+        this.debugTools.debugOverlay.style.display = 
+          this.debugTools.debugOverlay.style.display === "none" ? "block" : "none";
       }
     });
 
@@ -211,11 +211,6 @@ export class Engine {
       this.camera.far = maxDistUnits + 1000;
       this.camera.updateProjectionMatrix();
 
-      // Configure Massive Shadows!
-      // Shadow covers full render detail bounds + slight buffer
-      const shadowRadius = v * CONFIG.CHUNK_SIZE + 64;
-      this.lighting.updateShadowDistance(shadowRadius);
-
       if (this.world) this.world.reset();
     });
     renderDistInput.value = CONFIG.FULL_DETAIL_RADIUS;
@@ -227,25 +222,6 @@ export class Engine {
       this.lighting.setFog(
         e.target.checked ? new THREE.Fog(0xaaccff, 60, maxDistUnits) : null,
       );
-    });
-
-    document.getElementById("shadowToggle").addEventListener("change", (e) => {
-      const enabled = e.target.checked;
-
-      if (this.renderer.renderer) {
-        this.renderer.renderer.shadowMap.enabled = enabled;
-      }
-
-      this.lighting.setShadowsEnabled(enabled);
-
-      // --- WEBGPU NODE GRAPH FIX ---
-      // When shadow casting is toggled dynamically, WebGPU materials MUST be explicitly
-      // marked for update. This clears the node cache and drops the "ShadowNode"
-      // from the render pipeline so the game doesn't crash seeking the depthTexture.
-      if (this.blockMaterial) this.blockMaterial.needsUpdate = true;
-      if (this.lodMaterials) {
-        this.lodMaterials.forEach((m) => (m.needsUpdate = true));
-      }
     });
   }
 

@@ -7,7 +7,6 @@ import { Skybox } from "./Skybox.js";
  * - Integrated skybox with celestial bodies
  * - Improved atmospheric scattering
  * - Configurable light parameters
- * - Shadow management
  */
 export class Lighting {
   constructor(scene, camera) {
@@ -21,23 +20,17 @@ export class Lighting {
     this.ambient = new THREE.AmbientLight(0xffffff, 0.4);
     this.scene.add(this.ambient);
 
-    // Sun light (main directional light)
+    // Sun light (main directional light) - NO SHADOWS
     this.sunLight = new THREE.DirectionalLight(0xffffff, 1.0);
     this.sunLight.position.set(200, 500, 200);
-    this.sunLight.castShadow = true;
-    this.sunLight.shadow.camera.near = 0.5;
-    this.sunLight.shadow.camera.far = 2000;
-    this.sunLight.shadow.mapSize.width = 4096;
-    this.sunLight.shadow.mapSize.height = 4096;
-    this.sunLight.shadow.bias = -0.0005;
-    this.sunLight.shadow.radius = 2; // Soften shadow edges
+    this.sunLight.castShadow = false; // DISABLED SHADOWS
     this.scene.add(this.sunLight);
     this.scene.add(this.sunLight.target);
 
     // Moon light (secondary directional light for night)
     this.moonLight = new THREE.DirectionalLight(0xbbbbff, 0.1);
     this.moonLight.position.set(-200, 300, -200);
-    this.moonLight.castShadow = false; // Moon doesn't cast shadows
+    this.moonLight.castShadow = false; // DISABLED SHADOWS
     this.scene.add(this.moonLight);
     this.scene.add(this.moonLight.target);
 
@@ -49,15 +42,13 @@ export class Lighting {
     );
     this.scene.add(this.hemisphereLight);
 
-    // Light probes for better reflections (optional)
-    this.lightProbe = null;
-
     // State
     this._dayTimer = 0; // 0-1 representing 24-hour cycle
-    this._shadowsEnabled = true;
     this._materials = [];
     this._timeScale = 1.0; // 1.0 = real-time, higher = faster
-    
+    this._enabled = true;
+    this._skyboxEnabled = true;
+
     // Configuration
     this.config = {
       dayLengthMinutes: 60, // 60 IRL minutes = 1 game day
@@ -76,35 +67,30 @@ export class Lighting {
       skyColorDay: 0x87ceeb,
       skyColorNight: 0x000033,
       groundColorDay: 0x444444,
-      groundColorNight: 0x111122,
-      shadowDistance: 1000,
-      shadowResolution: 4096
+      groundColorNight: 0x111122
     };
-
-    // Create light helpers (disabled by default)
-    this._createLightHelpers();
   }
 
-  _createLightHelpers() {
-    // Sun light helper
-    this.sunLightHelper = new THREE.DirectionalLightHelper(this.sunLight, 5);
-    this.sunLightHelper.visible = false;
-    this.scene.add(this.sunLightHelper);
+  setEnabled(enabled) {
+    this._enabled = enabled;
+    this.ambient.visible = enabled;
+    this.sunLight.visible = enabled;
+    this.moonLight.visible = enabled;
+    this.hemisphereLight.visible = enabled;
+    this.skybox.setEnabled(enabled && this._skyboxEnabled);
+  }
 
-    // Moon light helper
-    this.moonLightHelper = new THREE.DirectionalLightHelper(this.moonLight, 5);
-    this.moonLightHelper.visible = false;
-    this.scene.add(this.moonLightHelper);
+  setSkyboxEnabled(enabled) {
+    this._skyboxEnabled = enabled;
+    this.skybox.setEnabled(this._enabled && enabled);
+  }
 
-    // Hemisphere light helper
-    this.hemisphereLightHelper = new THREE.HemisphereLightHelper(this.hemisphereLight, 5);
-    this.hemisphereLightHelper.visible = false;
-    this.scene.add(this.hemisphereLightHelper);
+  isEnabled() {
+    return this._enabled;
+  }
 
-    // Shadow camera helper
-    this.shadowCameraHelper = new THREE.CameraHelper(this.sunLight.shadow.camera);
-    this.shadowCameraHelper.visible = false;
-    this.scene.add(this.shadowCameraHelper);
+  isSkyboxEnabled() {
+    return this._skyboxEnabled;
   }
 
   setupMaterial(material) {
@@ -119,6 +105,8 @@ export class Lighting {
    * @param {THREE.Vector3} playerPos - Current player position
    */
   updateDayCycle(dayTimer, delta, playerPos) {
+    if (!this._enabled) return;
+    
     this._dayTimer = dayTimer;
     
     // Update skybox
@@ -187,9 +175,6 @@ export class Lighting {
     if (this.scene.fog && this.scene.fog.color) {
       this.scene.fog.color.setHex(skyColor);
     }
-
-    // Update light helpers
-    this._updateLightHelpers();
   }
 
   _calculateSunIntensity(dayTimer) {
@@ -309,52 +294,6 @@ export class Lighting {
     return c1.lerp(c2, factor).getHex();
   }
 
-  _updateLightHelpers() {
-    if (this.sunLightHelper) {
-      this.sunLightHelper.update();
-    }
-    if (this.moonLightHelper) {
-      this.moonLightHelper.update();
-    }
-    if (this.hemisphereLightHelper) {
-      this.hemisphereLightHelper.update();
-    }
-    if (this.shadowCameraHelper) {
-      this.shadowCameraHelper.update();
-    }
-  }
-
-  updateShadowDistance(radius) {
-    this.config.shadowDistance = radius;
-    const cam = this.sunLight.shadow.camera;
-    cam.left = -radius;
-    cam.right = radius;
-    cam.top = radius;
-    cam.bottom = -radius;
-    cam.updateProjectionMatrix();
-    
-    if (this.shadowCameraHelper) {
-      this.shadowCameraHelper.update();
-    }
-  }
-
-  setFog(fog) {
-    this.scene.fog = fog;
-  }
-
-  setShadowsEnabled(enabled) {
-    this._shadowsEnabled = enabled;
-    this.sunLight.castShadow = enabled;
-    this._materials.forEach((m) => (m.needsUpdate = true));
-  }
-
-  setLightHelperVisibility(visible) {
-    this.sunLightHelper.visible = visible;
-    this.moonLightHelper.visible = visible;
-    this.hemisphereLightHelper.visible = visible;
-    this.shadowCameraHelper.visible = visible;
-  }
-
   setTimeScale(scale) {
     this._timeScale = scale;
   }
@@ -389,17 +328,5 @@ export class Lighting {
     this.scene.remove(this.moonLight);
     this.scene.remove(this.moonLight.target);
     this.scene.remove(this.hemisphereLight);
-
-    // Remove helpers
-    this.scene.remove(this.sunLightHelper);
-    this.scene.remove(this.moonLightHelper);
-    this.scene.remove(this.hemisphereLightHelper);
-    this.scene.remove(this.shadowCameraHelper);
-
-    // Dispose materials
-    this.ambient.material?.dispose();
-    this.sunLight.material?.dispose();
-    this.moonLight.material?.dispose();
-    this.hemisphereLight.material?.dispose();
   }
 }
