@@ -2,7 +2,7 @@ import * as THREE from "three";
 
 /**
  * Comprehensive Debugging and Development Tools
- * 
+ *
  * Features:
  * - Performance monitoring with detailed metrics
  * - Scene inspection and object picking
@@ -19,20 +19,20 @@ export class DebugTools {
     this.renderer = renderer;
     this.world = world;
     this.lighting = lighting;
-    
+
     // Debug UI elements
     this.debugPanel = null;
     this.debugOverlay = null;
     this.performanceGraph = null;
     this.sceneGraph = null;
-    
+
     // Debug objects
     this.debugObjects = [];
     this.gridHelper = null;
     this.axisHelper = null;
     this.chunkBorders = new Map();
     this.lodBorders = new Map();
-    
+
     // Performance tracking
     this.performanceData = {
       fps: [],
@@ -41,20 +41,20 @@ export class DebugTools {
       drawCalls: [],
       triangles: [],
       textures: [],
-      shaders: []
+      shaders: [],
     };
-    
+
     // Camera recording
     this.cameraPath = [];
     this.isRecording = false;
     this.isPlaying = false;
     this.playbackIndex = 0;
-    
+
     // Picking
     this.pickedObject = null;
     this.pickPosition = null;
     this.pickMarker = null;
-    
+
     // Settings
     this.settings = {
       showStats: true,
@@ -71,19 +71,19 @@ export class DebugTools {
       showMemory: true,
       showDrawCalls: true,
       showTriangles: true,
-      maxPerformanceHistory: 100
+      maxPerformanceHistory: 100,
     };
-    
+
     // Initialize debug UI
     this._initDebugUI();
     this._initDebugObjects();
     this._initPerformanceTracking();
   }
-  
+
   _initDebugUI() {
     // Create debug panel container
-    this.debugPanel = document.createElement('div');
-    this.debugPanel.id = 'debugPanel';
+    this.debugPanel = document.createElement("div");
+    this.debugPanel.id = "debugPanel";
     this.debugPanel.style.cssText = `
       position: absolute;
       top: 20px;
@@ -100,10 +100,10 @@ export class DebugTools {
       display: none;
     `;
     document.body.appendChild(this.debugPanel);
-    
+
     // Create debug overlay for quick info
-    this.debugOverlay = document.createElement('div');
-    this.debugOverlay.id = 'debugOverlay';
+    this.debugOverlay = document.createElement("div");
+    this.debugOverlay.id = "debugOverlay";
     this.debugOverlay.style.cssText = `
       position: absolute;
       bottom: 20px;
@@ -120,18 +120,19 @@ export class DebugTools {
       display: none;
     `;
     document.body.appendChild(this.debugOverlay);
-    
+
     // Create performance graph canvas
-    this.performanceGraph = document.createElement('canvas');
-    this.performanceGraph.id = 'performanceGraph';
+    this.performanceGraph = document.createElement("canvas");
+    this.performanceGraph.id = "performanceGraph";
     this.performanceGraph.width = 300;
     this.performanceGraph.height = 150;
-    this.performanceGraph.style.cssText = 'width: 100%; height: 150px; background: #000; margin-top: 10px;';
+    this.performanceGraph.style.cssText =
+      "width: 100%; height: 150px; background: #000; margin-top: 10px;";
     this.debugPanel.appendChild(this.performanceGraph);
-    
+
     // Create scene graph container
-    this.sceneGraph = document.createElement('div');
-    this.sceneGraph.id = 'sceneGraph';
+    this.sceneGraph = document.createElement("div");
+    this.sceneGraph.id = "sceneGraph";
     this.sceneGraph.style.cssText = `
       margin-top: 10px;
       max-height: 200px;
@@ -143,250 +144,273 @@ export class DebugTools {
       display: none;
     `;
     this.debugPanel.appendChild(this.sceneGraph);
-    
+
     // Add debug controls
     this._createDebugControls();
   }
-  
+
   _createDebugControls() {
-    const controls = document.createElement('div');
-    controls.style.cssText = 'margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.1);';
-    
+    const controls = document.createElement("div");
+    controls.style.cssText =
+      "margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.1);";
+
     // Toggle buttons
-    const toggleBtn = document.createElement('button');
-    toggleBtn.textContent = 'Toggle Debug Panel';
-    toggleBtn.style.cssText = 'background: #333; color: #fff; border: none; padding: 5px 10px; margin: 2px; cursor: pointer; font-size: 11px;';
-    toggleBtn.addEventListener('click', () => {
-      this.debugPanel.style.display = this.debugPanel.style.display === 'none' ? 'block' : 'none';
+    const toggleBtn = document.createElement("button");
+    toggleBtn.textContent = "Toggle Debug Panel";
+    toggleBtn.style.cssText =
+      "background: #333; color: #fff; border: none; padding: 5px 10px; margin: 2px; cursor: pointer; font-size: 11px;";
+    toggleBtn.addEventListener("click", () => {
+      this.debugPanel.style.display =
+        this.debugPanel.style.display === "none" ? "block" : "none";
     });
     controls.appendChild(toggleBtn);
-    
-    const clearBtn = document.createElement('button');
-    clearBtn.textContent = 'Clear Data';
-    clearBtn.style.cssText = 'background: #333; color: #fff; border: none; padding: 5px 10px; margin: 2px; cursor: pointer; font-size: 11px;';
-    clearBtn.addEventListener('click', () => this.clearPerformanceData());
+
+    const clearBtn = document.createElement("button");
+    clearBtn.textContent = "Clear Data";
+    clearBtn.style.cssText =
+      "background: #333; color: #fff; border: none; padding: 5px 10px; margin: 2px; cursor: pointer; font-size: 11px;";
+    clearBtn.addEventListener("click", () => this.clearPerformanceData());
     controls.appendChild(clearBtn);
-    
+
     this.debugPanel.appendChild(controls);
-    
+
     // Add debug options
-    this._addDebugCheckbox('showGrid', 'Show Grid', false);
-    this._addDebugCheckbox('showAxis', 'Show Axis', false);
-    this._addDebugCheckbox('showChunkBorders', 'Show Chunk Borders', false);
-    this._addDebugCheckbox('showLODBorders', 'Show LOD Borders', false);
-    this._addDebugCheckbox('showLightHelpers', 'Show Light Helpers', false);
-    this._addDebugCheckbox('showPerformanceGraph', 'Show Performance Graph', false);
-    this._addDebugCheckbox('showSceneGraph', 'Show Scene Graph', false);
-    this._addDebugCheckbox('showWireframe', 'Wireframe Mode', false);
-    this._addDebugCheckbox('showBoundingBoxes', 'Show Bounding Boxes', false);
-    
+    this._addDebugCheckbox("showGrid", "Show Grid", false);
+    this._addDebugCheckbox("showAxis", "Show Axis", false);
+    this._addDebugCheckbox("showChunkBorders", "Show Chunk Borders", false);
+    this._addDebugCheckbox("showLODBorders", "Show LOD Borders", false);
+    this._addDebugCheckbox("showLightHelpers", "Show Light Helpers", false);
+    this._addDebugCheckbox(
+      "showPerformanceGraph",
+      "Show Performance Graph",
+      false,
+    );
+    this._addDebugCheckbox("showSceneGraph", "Show Scene Graph", false);
+    this._addDebugCheckbox("showWireframe", "Wireframe Mode", false);
+    this._addDebugCheckbox("showBoundingBoxes", "Show Bounding Boxes", false);
+
     // Lighting controls
-    const lightingDiv = document.createElement('div');
-    lightingDiv.style.cssText = 'margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.1);';
-    lightingDiv.innerHTML = '<h3 style="margin: 0 0 10px 0; font-size: 12px; color: #0ff;">Lighting Controls</h3>';
-    
-    const lightingToggle = document.createElement('div');
-    lightingToggle.style.cssText = 'display: flex; align-items: center; margin: 4px 0;';
-    
-    const lightingCheckbox = document.createElement('input');
-    lightingCheckbox.type = 'checkbox';
-    lightingCheckbox.id = 'debug_lighting';
+    const lightingDiv = document.createElement("div");
+    lightingDiv.style.cssText =
+      "margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.1);";
+    lightingDiv.innerHTML =
+      '<h3 style="margin: 0 0 10px 0; font-size: 12px; color: #0ff;">Lighting Controls</h3>';
+
+    const lightingToggle = document.createElement("div");
+    lightingToggle.style.cssText =
+      "display: flex; align-items: center; margin: 4px 0;";
+
+    const lightingCheckbox = document.createElement("input");
+    lightingCheckbox.type = "checkbox";
+    lightingCheckbox.id = "debug_lighting";
     lightingCheckbox.checked = true;
-    lightingCheckbox.addEventListener('change', (e) => {
+    lightingCheckbox.addEventListener("change", (e) => {
       if (this.lighting) {
         this.lighting.setEnabled(e.target.checked);
       }
     });
-    
-    const lightingLabel = document.createElement('label');
-    lightingLabel.textContent = 'Enable Lighting';
-    lightingLabel.htmlFor = 'debug_lighting';
-    lightingLabel.style.cssText = 'margin-left: 5px; font-size: 11px; color: #ccc;';
-    
+
+    const lightingLabel = document.createElement("label");
+    lightingLabel.textContent = "Enable Lighting";
+    lightingLabel.htmlFor = "debug_lighting";
+    lightingLabel.style.cssText =
+      "margin-left: 5px; font-size: 11px; color: #ccc;";
+
     lightingToggle.appendChild(lightingCheckbox);
     lightingToggle.appendChild(lightingLabel);
     lightingDiv.appendChild(lightingToggle);
-    
-    const skyboxToggle = document.createElement('div');
-    skyboxToggle.style.cssText = 'display: flex; align-items: center; margin: 4px 0;';
-    
-    const skyboxCheckbox = document.createElement('input');
-    skyboxCheckbox.type = 'checkbox';
-    skyboxCheckbox.id = 'debug_skybox';
+
+    const skyboxToggle = document.createElement("div");
+    skyboxToggle.style.cssText =
+      "display: flex; align-items: center; margin: 4px 0;";
+
+    const skyboxCheckbox = document.createElement("input");
+    skyboxCheckbox.type = "checkbox";
+    skyboxCheckbox.id = "debug_skybox";
     skyboxCheckbox.checked = true;
-    skyboxCheckbox.addEventListener('change', (e) => {
+    skyboxCheckbox.addEventListener("change", (e) => {
       if (this.lighting) {
         this.lighting.setSkyboxEnabled(e.target.checked);
       }
     });
-    
-    const skyboxLabel = document.createElement('label');
-    skyboxLabel.textContent = 'Enable Skybox';
-    skyboxLabel.htmlFor = 'debug_skybox';
-    skyboxLabel.style.cssText = 'margin-left: 5px; font-size: 11px; color: #ccc;';
-    
+
+    const skyboxLabel = document.createElement("label");
+    skyboxLabel.textContent = "Enable Skybox";
+    skyboxLabel.htmlFor = "debug_skybox";
+    skyboxLabel.style.cssText =
+      "margin-left: 5px; font-size: 11px; color: #ccc;";
+
     skyboxToggle.appendChild(skyboxCheckbox);
     skyboxToggle.appendChild(skyboxLabel);
     lightingDiv.appendChild(skyboxToggle);
-    
+
     this.debugPanel.appendChild(lightingDiv);
-    
+
     // Camera controls
-    const cameraDiv = document.createElement('div');
-    cameraDiv.style.cssText = 'margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.1);';
-    
-    const recordBtn = document.createElement('button');
-    recordBtn.textContent = 'Start Recording';
-    recordBtn.id = 'recordBtn';
-    recordBtn.style.cssText = 'background: #f00; color: #fff; border: none; padding: 5px 10px; margin: 2px; cursor: pointer; font-size: 11px;';
-    recordBtn.addEventListener('click', () => this.toggleRecording());
+    const cameraDiv = document.createElement("div");
+    cameraDiv.style.cssText =
+      "margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.1);";
+
+    const recordBtn = document.createElement("button");
+    recordBtn.textContent = "Start Recording";
+    recordBtn.id = "recordBtn";
+    recordBtn.style.cssText =
+      "background: #f00; color: #fff; border: none; padding: 5px 10px; margin: 2px; cursor: pointer; font-size: 11px;";
+    recordBtn.addEventListener("click", () => this.toggleRecording());
     cameraDiv.appendChild(recordBtn);
-    
-    const playBtn = document.createElement('button');
-    playBtn.textContent = 'Play Recording';
-    playBtn.id = 'playBtn';
-    playBtn.style.cssText = 'background: #0f0; color: #fff; border: none; padding: 5px 10px; margin: 2px; cursor: pointer; font-size: 11px;';
-    playBtn.addEventListener('click', () => this.togglePlayback());
+
+    const playBtn = document.createElement("button");
+    playBtn.textContent = "Play Recording";
+    playBtn.id = "playBtn";
+    playBtn.style.cssText =
+      "background: #0f0; color: #fff; border: none; padding: 5px 10px; margin: 2px; cursor: pointer; font-size: 11px;";
+    playBtn.addEventListener("click", () => this.togglePlayback());
     cameraDiv.appendChild(playBtn);
-    
-    const clearPathBtn = document.createElement('button');
-    clearPathBtn.textContent = 'Clear Path';
-    clearPathBtn.style.cssText = 'background: #333; color: #fff; border: none; padding: 5px 10px; margin: 2px; cursor: pointer; font-size: 11px;';
-    clearPathBtn.addEventListener('click', () => this.clearCameraPath());
+
+    const clearPathBtn = document.createElement("button");
+    clearPathBtn.textContent = "Clear Path";
+    clearPathBtn.style.cssText =
+      "background: #333; color: #fff; border: none; padding: 5px 10px; margin: 2px; cursor: pointer; font-size: 11px;";
+    clearPathBtn.addEventListener("click", () => this.clearCameraPath());
     cameraDiv.appendChild(clearPathBtn);
-    
+
     this.debugPanel.appendChild(cameraDiv);
   }
-  
+
   _addDebugCheckbox(setting, label, defaultValue) {
-    const container = document.createElement('div');
-    container.style.cssText = 'display: flex; align-items: center; margin: 2px 0;';
-    
-    const checkbox = document.createElement('input');
-    checkbox.type = 'checkbox';
+    const container = document.createElement("div");
+    container.style.cssText =
+      "display: flex; align-items: center; margin: 2px 0;";
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
     checkbox.id = `debug_${setting}`;
     checkbox.checked = defaultValue;
-    checkbox.addEventListener('change', (e) => {
+    checkbox.addEventListener("change", (e) => {
       this.settings[setting] = e.target.checked;
       this._onSettingChanged(setting, e.target.checked);
     });
-    
-    const labelEl = document.createElement('label');
+
+    const labelEl = document.createElement("label");
     labelEl.textContent = label;
     labelEl.htmlFor = `debug_${setting}`;
-    labelEl.style.cssText = 'margin-left: 5px; font-size: 11px;';
-    
+    labelEl.style.cssText = "margin-left: 5px; font-size: 11px;";
+
     container.appendChild(checkbox);
     container.appendChild(labelEl);
     this.debugPanel.appendChild(container);
-    
+
     this.settings[setting] = defaultValue;
   }
-  
+
   _onSettingChanged(setting, value) {
     switch (setting) {
-      case 'showGrid':
+      case "showGrid":
         this.toggleGrid(value);
         break;
-      case 'showAxis':
+      case "showAxis":
         this.toggleAxis(value);
         break;
-      case 'showChunkBorders':
+      case "showChunkBorders":
         this.toggleChunkBorders(value);
         break;
-      case 'showLODBorders':
+      case "showLODBorders":
         this.toggleLODBorders(value);
         break;
-      case 'showLightHelpers':
+      case "showLightHelpers":
         this.toggleLightHelpers(value);
         break;
-      case 'showPerformanceGraph':
-        this.performanceGraph.style.display = value ? 'block' : 'none';
+      case "showPerformanceGraph":
+        this.performanceGraph.style.display = value ? "block" : "none";
         break;
-      case 'showSceneGraph':
-        this.sceneGraph.style.display = value ? 'block' : 'none';
+      case "showSceneGraph":
+        this.sceneGraph.style.display = value ? "block" : "none";
         if (value) this.updateSceneGraph();
         break;
-      case 'showWireframe':
+      case "showWireframe":
         this.toggleWireframe(value);
         break;
-      case 'showBoundingBoxes':
+      case "showBoundingBoxes":
         this.toggleBoundingBoxes(value);
         break;
     }
   }
-  
+
   _initDebugObjects() {
     // Grid helper
     this.gridHelper = new THREE.GridHelper(100, 100, 0x333333, 0x333333);
     this.gridHelper.visible = false;
     this.scene.add(this.gridHelper);
-    
+
     // Axis helper
     this.axisHelper = new THREE.AxesHelper(10);
     this.axisHelper.visible = false;
     this.scene.add(this.axisHelper);
-    
+
     // Pick marker
     this.pickMarker = new THREE.Mesh(
       new THREE.SphereGeometry(0.5, 8, 8),
-      new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true })
+      new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true }),
     );
     this.pickMarker.visible = false;
     this.scene.add(this.pickMarker);
   }
-  
+
   _initPerformanceTracking() {
     // Set up performance monitoring
     this._lastFrameTime = performance.now();
     this._frameCount = 0;
     this._fpsUpdateTime = performance.now();
     this._currentFPS = 0;
-    
+
     // Start performance tracking loop
     this._performanceLoop();
   }
-  
+
   _performanceLoop() {
     const now = performance.now();
     const delta = now - this._lastFrameTime;
     this._lastFrameTime = now;
-    
+
     // Collect performance data
     this._collectPerformanceData(delta, now);
-    
+
     // Update debug overlay
     this._updateDebugOverlay();
-    
+
     // Draw performance graph
     if (this.settings.showPerformanceGraph) {
       this._drawPerformanceGraph();
     }
-    
+
     // Continue loop
     requestAnimationFrame(() => this._performanceLoop());
   }
-  
+
   _collectPerformanceData(delta, now) {
     // FPS
     this._frameCount++;
     if (now - this._fpsUpdateTime >= 1000) {
-      this._currentFPS = Math.round((this._frameCount * 1000) / (now - this._fpsUpdateTime));
+      this._currentFPS = Math.round(
+        (this._frameCount * 1000) / (now - this._fpsUpdateTime),
+      );
       this._frameCount = 0;
       this._fpsUpdateTime = now;
     }
-    
+
     // Store performance data
     this.performanceData.fps.push(this._currentFPS);
     this.performanceData.frameTimes.push(delta);
-    
+
     // Memory usage (approximate)
     if (window.performance && window.performance.memory) {
-      this.performanceData.memory.push(window.performance.memory.usedJSHeapSize / 1048576);
+      this.performanceData.memory.push(
+        window.performance.memory.usedJSHeapSize / 1048576,
+      );
     } else {
       this.performanceData.memory.push(0);
     }
-    
+
     // Renderer stats
     if (this.renderer) {
       const info = this.renderer.info;
@@ -395,7 +419,7 @@ export class DebugTools {
       this.performanceData.textures.push(info.memory.textures);
       this.performanceData.shaders.push(info.programs.length);
     }
-    
+
     // Limit history
     const maxHistory = this.settings.maxPerformanceHistory;
     for (const key in this.performanceData) {
@@ -404,60 +428,66 @@ export class DebugTools {
       }
     }
   }
-  
+
   _updateDebugOverlay() {
     if (!this.debugOverlay) return;
-    
-    let html = '';
-    
+
+    let html = "";
+
     if (this.settings.showFPS) {
       html += `FPS: ${this._currentFPS}<br>`;
     }
-    
-    if (this.settings.showMemory && window.performance && window.performance.memory) {
-      const mem = (window.performance.memory.usedJSHeapSize / 1048576).toFixed(2);
+
+    if (
+      this.settings.showMemory &&
+      window.performance &&
+      window.performance.memory
+    ) {
+      const mem = (window.performance.memory.usedJSHeapSize / 1048576).toFixed(
+        2,
+      );
       html += `MEM: ${mem} MB<br>`;
     }
-    
+
     if (this.settings.showDrawCalls && this.renderer) {
       const calls = this.renderer.info.render.calls;
       html += `DRAW: ${calls}<br>`;
     }
-    
+
     if (this.settings.showTriangles && this.renderer) {
       const tris = this.renderer.info.render.triangles.toLocaleString();
       html += `TRIS: ${tris}<br>`;
     }
-    
+
     // Add camera info
     if (this.camera) {
       const pos = this.camera.position;
       html += `CAM: ${pos.x.toFixed(1)}, ${pos.y.toFixed(1)}, ${pos.z.toFixed(1)}<br>`;
     }
-    
+
     // Add world info
     if (this.world) {
       const stats = this.world.getStats();
       html += `CHUNKS: ${stats.fullChunks + stats.lodChunks}<br>`;
       html += `BLOCKS: ${stats.totalBlocks.toLocaleString()}<br>`;
     }
-    
+
     this.debugOverlay.innerHTML = html;
   }
-  
+
   _drawPerformanceGraph() {
     if (!this.performanceGraph) return;
-    
-    const ctx = this.performanceGraph.getContext('2d');
+
+    const ctx = this.performanceGraph.getContext("2d");
     const width = this.performanceGraph.width;
     const height = this.performanceGraph.height;
-    
+
     // Clear canvas
-    ctx.fillStyle = '#000';
+    ctx.fillStyle = "#000";
     ctx.fillRect(0, 0, width, height);
-    
+
     // Draw grid
-    ctx.strokeStyle = '#333';
+    ctx.strokeStyle = "#333";
     ctx.lineWidth = 1;
     for (let i = 0; i < 5; i++) {
       const y = height * (i / 4);
@@ -466,21 +496,22 @@ export class DebugTools {
       ctx.lineTo(width, y);
       ctx.stroke();
     }
-    
+
     // Draw FPS graph
     if (this.performanceData.fps.length > 1) {
-      ctx.strokeStyle = '#0f0';
+      ctx.strokeStyle = "#0f0";
       ctx.lineWidth = 2;
       ctx.beginPath();
-      
+
       const maxFPS = Math.max(...this.performanceData.fps, 60);
       const minFPS = Math.min(...this.performanceData.fps, 0);
       const range = maxFPS - minFPS || 1;
-      
+
       for (let i = 0; i < this.performanceData.fps.length; i++) {
         const x = (i / (this.performanceData.fps.length - 1)) * width;
-        const y = height - ((this.performanceData.fps[i] - minFPS) / range) * height;
-        
+        const y =
+          height - ((this.performanceData.fps[i] - minFPS) / range) * height;
+
         if (i === 0) {
           ctx.moveTo(x, y);
         } else {
@@ -489,21 +520,23 @@ export class DebugTools {
       }
       ctx.stroke();
     }
-    
+
     // Draw frame time graph
     if (this.performanceData.frameTimes.length > 1) {
-      ctx.strokeStyle = '#f00';
+      ctx.strokeStyle = "#f00";
       ctx.lineWidth = 1;
       ctx.beginPath();
-      
+
       const maxTime = Math.max(...this.performanceData.frameTimes, 33);
       const minTime = Math.min(...this.performanceData.frameTimes, 0);
       const range = maxTime - minTime || 1;
-      
+
       for (let i = 0; i < this.performanceData.frameTimes.length; i++) {
         const x = (i / (this.performanceData.frameTimes.length - 1)) * width;
-        const y = height - ((this.performanceData.frameTimes[i] - minTime) / range) * height;
-        
+        const y =
+          height -
+          ((this.performanceData.frameTimes[i] - minTime) / range) * height;
+
         if (i === 0) {
           ctx.moveTo(x, y);
         } else {
@@ -513,67 +546,85 @@ export class DebugTools {
       ctx.stroke();
     }
   }
-  
+
   updateSceneGraph() {
     if (!this.sceneGraph || !this.settings.showSceneGraph) return;
-    
-    let html = '<div style="font-weight: bold; margin-bottom: 5px;">Scene Graph</div>';
-    
+
+    let html =
+      '<div style="font-weight: bold; margin-bottom: 5px;">Scene Graph</div>';
+
     // Count objects by type
     const counts = {};
     this.scene.traverse((obj) => {
       const type = obj.type;
       counts[type] = (counts[type] || 0) + 1;
     });
-    
+
     for (const type in counts) {
       html += `<div>${type}: ${counts[type]}</div>`;
     }
-    
+
     this.sceneGraph.innerHTML = html;
   }
-  
+
   // Debug visualization toggles
   toggleGrid(show) {
     if (this.gridHelper) this.gridHelper.visible = show;
   }
-  
+
   toggleAxis(show) {
     if (this.axisHelper) this.axisHelper.visible = show;
   }
-  
+
   toggleChunkBorders(show) {
     if (!this.world) return;
-    
+
     if (show) {
       // Create border helpers for all loaded chunks
-      this.world.loadedChunks.forEach(chunk => {
+      this.world.loadedChunks.forEach((chunk) => {
         if (!this.chunkBorders.has(chunk)) {
-          const helper = new THREE.Box3Helper(chunk.geometry.boundingBox || new THREE.Box3(), 0x00ff00);
+          // Ensure bounding box is computed
+          if (!chunk.geometry.boundingBox) chunk.geometry.computeBoundingBox();
+
+          let box = chunk.geometry.boundingBox;
+
+          // Prevent Infinity values from crashing WebGPU
+          if (!box || box.isEmpty()) {
+            box = new THREE.Box3(
+              new THREE.Vector3(0, 0, 0),
+              new THREE.Vector3(0, 0, 0),
+            );
+          }
+
+          const helper = new THREE.Box3Helper(box, 0x00ff00);
           this.chunkBorders.set(chunk, helper);
           this.scene.add(helper);
         }
       });
     } else {
-      // Remove all chunk border helpers
-      this.chunkBorders.forEach(helper => this.scene.remove(helper));
+      // Remove and dispose all chunk border helpers
+      this.chunkBorders.forEach((helper) => {
+        this.scene.remove(helper);
+        helper.geometry.dispose();
+        helper.material.dispose();
+      });
       this.chunkBorders.clear();
     }
   }
-  
+
   toggleLODBorders(show) {
     if (!this.world) return;
-    
+
     if (show) {
       // This would need to be implemented based on your LOD system
       // For now, we'll just show a message
-      console.log('LOD border visualization would be shown here');
+      console.log("LOD border visualization would be shown here");
     }
   }
-  
+
   toggleLightHelpers(show) {
     if (!this.lighting) return;
-    
+
     if (show) {
       // Add helpers for all lights in the scene
       this.scene.traverse((obj) => {
@@ -588,7 +639,7 @@ export class DebugTools {
           } else if (obj.isHemisphereLight) {
             helper = new THREE.HemisphereLightHelper(obj, 1);
           }
-          
+
           if (helper) {
             obj.helper = helper;
             this.scene.add(helper);
@@ -604,27 +655,36 @@ export class DebugTools {
           obj.helper = null;
         }
       });
-      this.debugObjects = this.debugObjects.filter(obj => !obj.isLightHelper);
+      this.debugObjects = this.debugObjects.filter((obj) => !obj.isLightHelper);
     }
   }
-  
+
   toggleWireframe(show) {
     if (!this.world) return;
-    
-    this.world.loadedChunks.forEach(chunk => {
+
+    this.world.loadedChunks.forEach((chunk) => {
       if (chunk.material) {
         chunk.material.wireframe = show;
       }
     });
   }
-  
+
   toggleBoundingBoxes(show) {
     if (!this.world) return;
-    
+
     if (show) {
-      this.world.loadedChunks.forEach(chunk => {
+      this.world.loadedChunks.forEach((chunk) => {
         if (chunk && !chunk.boundingBoxHelper) {
-          const box = new THREE.Box3().setFromObject(chunk);
+          let box = new THREE.Box3().setFromObject(chunk);
+
+          // Prevent Infinity values from crashing WebGPU
+          if (box.isEmpty()) {
+            box = new THREE.Box3(
+              new THREE.Vector3(0, 0, 0),
+              new THREE.Vector3(0, 0, 0),
+            );
+          }
+
           const helper = new THREE.Box3Helper(box, 0xff0000);
           chunk.boundingBoxHelper = helper;
           this.scene.add(helper);
@@ -632,26 +692,30 @@ export class DebugTools {
         }
       });
     } else {
-      this.world.loadedChunks.forEach(chunk => {
+      this.world.loadedChunks.forEach((chunk) => {
         if (chunk && chunk.boundingBoxHelper) {
           this.scene.remove(chunk.boundingBoxHelper);
+          chunk.boundingBoxHelper.geometry.dispose();
+          chunk.boundingBoxHelper.material.dispose();
           chunk.boundingBoxHelper = null;
         }
       });
-      this.debugObjects = this.debugObjects.filter(obj => !obj.isBox3Helper);
+      this.debugObjects = this.debugObjects.filter((obj) => !obj.isBox3Helper);
     }
   }
-  
+
   // Camera recording and playback
   toggleRecording() {
     this.isRecording = !this.isRecording;
-    
-    const recordBtn = document.getElementById('recordBtn');
+
+    const recordBtn = document.getElementById("recordBtn");
     if (recordBtn) {
-      recordBtn.textContent = this.isRecording ? 'Stop Recording' : 'Start Recording';
-      recordBtn.style.background = this.isRecording ? '#f00' : '#333';
+      recordBtn.textContent = this.isRecording
+        ? "Stop Recording"
+        : "Start Recording";
+      recordBtn.style.background = this.isRecording ? "#f00" : "#333";
     }
-    
+
     if (this.isRecording) {
       this.cameraPath = [];
       this._startRecording();
@@ -659,39 +723,39 @@ export class DebugTools {
       this._stopRecording();
     }
   }
-  
+
   _startRecording() {
     this._recordingInterval = setInterval(() => {
       const cameraData = {
         position: this.camera.position.clone(),
         rotation: this.camera.rotation.clone(),
-        time: Date.now()
+        time: Date.now(),
       };
       this.cameraPath.push(cameraData);
     }, 100); // Record every 100ms
   }
-  
+
   _stopRecording() {
     if (this._recordingInterval) {
       clearInterval(this._recordingInterval);
       this._recordingInterval = null;
     }
   }
-  
+
   togglePlayback() {
     if (this.cameraPath.length === 0) {
-      console.log('No camera path recorded');
+      console.log("No camera path recorded");
       return;
     }
-    
+
     this.isPlaying = !this.isPlaying;
-    
-    const playBtn = document.getElementById('playBtn');
+
+    const playBtn = document.getElementById("playBtn");
     if (playBtn) {
-      playBtn.textContent = this.isPlaying ? 'Stop Playback' : 'Play Recording';
-      playBtn.style.background = this.isPlaying ? '#0f0' : '#333';
+      playBtn.textContent = this.isPlaying ? "Stop Playback" : "Play Recording";
+      playBtn.style.background = this.isPlaying ? "#0f0" : "#333";
     }
-    
+
     if (this.isPlaying) {
       this.playbackIndex = 0;
       this._startPlayback();
@@ -699,156 +763,166 @@ export class DebugTools {
       this._stopPlayback();
     }
   }
-  
+
   _startPlayback() {
     const startTime = Date.now();
     const firstFrame = this.cameraPath[0];
     const startTimeOffset = startTime - firstFrame.time;
-    
+
     this._playbackInterval = setInterval(() => {
       const now = Date.now();
       const elapsed = now - startTime;
-      
+
       // Find the closest frame
       let closestIndex = 0;
       let closestTime = Infinity;
-      
+
       for (let i = 0; i < this.cameraPath.length; i++) {
         const frameTime = this.cameraPath[i].time - firstFrame.time;
         const timeDiff = Math.abs(frameTime - elapsed);
-        
+
         if (timeDiff < closestTime) {
           closestTime = timeDiff;
           closestIndex = i;
         }
       }
-      
+
       this.playbackIndex = closestIndex;
       const frame = this.cameraPath[closestIndex];
-      
+
       // Apply camera position and rotation
       this.camera.position.copy(frame.position);
       this.camera.rotation.copy(frame.rotation);
       this.camera.updateProjectionMatrix();
-      
+
       // Stop playback when we reach the end
       if (closestIndex >= this.cameraPath.length - 1) {
         this.togglePlayback();
       }
     }, 16); // ~60fps playback
   }
-  
+
   _stopPlayback() {
     if (this._playbackInterval) {
       clearInterval(this._playbackInterval);
       this._playbackInterval = null;
     }
   }
-  
+
   clearCameraPath() {
     this.cameraPath = [];
     this.playbackIndex = 0;
     this._stopRecording();
     this._stopPlayback();
-    
-    const playBtn = document.getElementById('playBtn');
+
+    const playBtn = document.getElementById("playBtn");
     if (playBtn) {
-      playBtn.textContent = 'Play Recording';
-      playBtn.style.background = '#333';
+      playBtn.textContent = "Play Recording";
+      playBtn.style.background = "#333";
     }
-    
-    const recordBtn = document.getElementById('recordBtn');
+
+    const recordBtn = document.getElementById("recordBtn");
     if (recordBtn) {
-      recordBtn.textContent = 'Start Recording';
-      recordBtn.style.background = '#333';
+      recordBtn.textContent = "Start Recording";
+      recordBtn.style.background = "#333";
     }
   }
-  
+
   // Object picking
   pickObject(event) {
     if (!this.camera || !this.renderer) return;
-    
+
     // Calculate mouse position in normalized device coordinates
     const rect = this.renderer.domElement.getBoundingClientRect();
     const mouse = new THREE.Vector2();
     mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-    
+
     // Create raycaster
     const raycaster = new THREE.Raycaster();
     raycaster.setFromCamera(mouse, this.camera);
-    
+
     // Intersect with all objects in the scene
     const intersects = raycaster.intersectObjects(this.scene.children, true);
-    
+
     if (intersects.length > 0) {
       const intersect = intersects[0];
       this.pickedObject = intersect.object;
       this.pickPosition = intersect.point.clone();
-      
+
       // Show pick marker
       if (this.pickMarker) {
         this.pickMarker.position.copy(intersect.point);
         this.pickMarker.visible = true;
       }
-      
+
       // Log pick info
-      console.log('Picked object:', intersect.object);
-      console.log('Position:', intersect.point);
-      console.log('Distance:', intersect.distance);
-      
+      console.log("Picked object:", intersect.object);
+      console.log("Position:", intersect.point);
+      console.log("Distance:", intersect.distance);
+
       // Update debug overlay with pick info
       if (this.debugOverlay) {
-        const objType = intersect.object.type || 'Unknown';
-        const objName = intersect.object.name || '(unnamed)';
+        const objType = intersect.object.type || "Unknown";
+        const objName = intersect.object.name || "(unnamed)";
         this.debugOverlay.innerHTML += `<br>PICKED: ${objType} (${objName})<br>`;
         this.debugOverlay.innerHTML += `POS: ${intersect.point.x.toFixed(2)}, ${intersect.point.y.toFixed(2)}, ${intersect.point.z.toFixed(2)}<br>`;
         this.debugOverlay.innerHTML += `DIST: ${intersect.distance.toFixed(2)}<br>`;
       }
-      
+
       return intersect;
     } else {
       // Clear pick
       this.pickedObject = null;
       this.pickPosition = null;
-      
+
       if (this.pickMarker) {
         this.pickMarker.visible = false;
       }
-      
+
       return null;
     }
   }
-  
+
   // Utility functions
   clearPerformanceData() {
     for (const key in this.performanceData) {
       this.performanceData[key] = [];
     }
   }
-  
+
   getPerformanceStats() {
     return {
       fps: this._currentFPS,
       frameTimes: [...this.performanceData.frameTimes],
       memory: [...this.performanceData.memory],
       drawCalls: [...this.performanceData.drawCalls],
-      triangles: [...this.performanceData.triangles]
+      triangles: [...this.performanceData.triangles],
     };
   }
-  
+
   // Update debug tools (call this every frame)
   update(delta) {
     // Update scene graph if visible
     if (this.settings.showSceneGraph) {
       this.updateSceneGraph();
     }
-    
+
     // Update chunk borders if enabled
     if (this.settings.showChunkBorders && this.world) {
-      this.world.loadedChunks.forEach(chunk => {
+      this.world.loadedChunks.forEach((chunk) => {
         if (!this.chunkBorders.has(chunk)) {
-          const helper = new THREE.Box3Helper(chunk.geometry.boundingBox || new THREE.Box3(), 0x00ff00);
+          if (!chunk.geometry.boundingBox) chunk.geometry.computeBoundingBox();
+
+          let box = chunk.geometry.boundingBox;
+          if (!box || box.isEmpty()) {
+            box = new THREE.Box3(
+              new THREE.Vector3(0, 0, 0),
+              new THREE.Vector3(0, 0, 0),
+            );
+          }
+
+          const helper = new THREE.Box3Helper(box, 0x00ff00);
           this.chunkBorders.set(chunk, helper);
           this.scene.add(helper);
         }
@@ -858,17 +932,17 @@ export class DebugTools {
   
   dispose() {
     // Clean up debug objects
-    this.debugObjects.forEach(obj => {
+    this.debugObjects.forEach((obj) => {
       if (obj.parent) obj.parent.remove(obj);
       if (obj.geometry) obj.geometry.dispose();
       if (obj.material) obj.material.dispose();
     });
-    
+
     // Clean up helpers
     if (this.gridHelper) this.scene.remove(this.gridHelper);
     if (this.axisHelper) this.scene.remove(this.axisHelper);
     if (this.pickMarker) this.scene.remove(this.pickMarker);
-    
+
     // Clean up UI
     if (this.debugPanel && this.debugPanel.parentNode) {
       this.debugPanel.parentNode.removeChild(this.debugPanel);
@@ -876,7 +950,7 @@ export class DebugTools {
     if (this.debugOverlay && this.debugOverlay.parentNode) {
       this.debugOverlay.parentNode.removeChild(this.debugOverlay);
     }
-    
+
     // Stop recording/playback
     this._stopRecording();
     this._stopPlayback();

@@ -350,16 +350,16 @@ export class Engine {
     const delta = Math.min((now - this._lastFrameTime) * 0.001, 0.05);
     this._lastFrameTime = now;
 
-    if (!this._dayTimer) this._dayTimer = 0;
+if (!this._dayTimer) this._dayTimer = 0;
     
     // 60 IRL minutes = 1 game day
-    // So we need to scale the time: delta * (24 hours / 60 minutes) = delta * 24
-    this._dayTimer += delta * (24 / 60);
+    // 60 minutes * 60 seconds = 3600 seconds per game day
+    this._dayTimer += delta / 3600;
     this._dayTimer %= 1.0;
 
     // Update lighting with 60-minute day cycle
     this.lighting.updateDayCycle(this._dayTimer, delta, this.camera.position);
-
+    
     // Update debug tools
     if (this.debugTools) {
       this.debugTools.update(delta);
