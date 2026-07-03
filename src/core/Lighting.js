@@ -2,11 +2,7 @@ import * as THREE from "three";
 import { Skybox } from "./Skybox.js";
 
 /**
- * Enhanced Lighting System with:
- * - Dynamic day/night cycle (60 IRL minutes = 1 game day)
- * - Integrated skybox with celestial bodies
- * - Improved atmospheric scattering
- * - Configurable light parameters
+ * Simple Lighting System with day/night cycle
  */
 export class Lighting {
   constructor(scene, camera) {
@@ -16,59 +12,31 @@ export class Lighting {
     // Initialize skybox
     this.skybox = new Skybox(scene, camera);
 
-    // Main light sources
-    this.ambient = new THREE.AmbientLight(0xffffff, 0.4);
+    // Simple ambient light
+    this.ambient = new THREE.AmbientLight(0xffffff, 0.5);
     this.scene.add(this.ambient);
 
-    // Sun light (main directional light) - NO SHADOWS
-    this.sunLight = new THREE.DirectionalLight(0xffffff, 1.0);
+    // Simple directional light for sun
+    this.sunLight = new THREE.DirectionalLight(0xffffff, 0.8);
     this.sunLight.position.set(200, 500, 200);
-    this.sunLight.castShadow = false; // DISABLED SHADOWS
+    this.sunLight.castShadow = false;
     this.scene.add(this.sunLight);
     this.scene.add(this.sunLight.target);
 
-    // Moon light (secondary directional light for night)
-    this.moonLight = new THREE.DirectionalLight(0xbbbbff, 0.1);
+    // Simple directional light for moon
+    this.moonLight = new THREE.DirectionalLight(0xbbbbff, 0.2);
     this.moonLight.position.set(-200, 300, -200);
-    this.moonLight.castShadow = false; // DISABLED SHADOWS
+    this.moonLight.castShadow = false;
     this.scene.add(this.moonLight);
     this.scene.add(this.moonLight.target);
 
-    // Hemisphere light for sky/ground color
-    this.hemisphereLight = new THREE.HemisphereLight(
-      0x87ceeb, // sky color
-      0x333333, // ground color
-      0.3
-    );
-    this.scene.add(this.hemisphereLight);
-
     // State
-    this._dayTimer = 0; // 0-1 representing 24-hour cycle
-    this._materials = [];
-    this._timeScale = 1.0; // 1.0 = real-time, higher = faster
+    this._dayTimer = 0;
     this._enabled = true;
     this._skyboxEnabled = true;
 
-    // Configuration
-    this.config = {
-      dayLengthMinutes: 60, // 60 IRL minutes = 1 game day
-      sunIntensityDay: 1.0,
-      sunIntensityNight: 0.0,
-      ambientIntensityDay: 0.4,
-      ambientIntensityNight: 0.1,
-      hemisphereIntensityDay: 0.3,
-      hemisphereIntensityNight: 0.1,
-      sunColorDay: 0xffffff,
-      sunColorDawn: 0xffaa66,
-      sunColorDusk: 0xff6666,
-      sunColorNight: 0x000000,
-      ambientColorDay: 0xffffff,
-      ambientColorNight: 0x444466,
-      skyColorDay: 0x87ceeb,
-      skyColorNight: 0x000033,
-      groundColorDay: 0x444444,
-      groundColorNight: 0x111122
-    };
+    // Set initial scene background
+    this.scene.background = new THREE.Color(0x87ceeb);
   }
 
   setEnabled(enabled) {
@@ -76,7 +44,6 @@ export class Lighting {
     this.ambient.visible = enabled;
     this.sunLight.visible = enabled;
     this.moonLight.visible = enabled;
-    this.hemisphereLight.visible = enabled;
     this.skybox.setEnabled(enabled && this._skyboxEnabled);
   }
 
@@ -94,16 +61,9 @@ export class Lighting {
   }
 
   setupMaterial(material) {
-    this._materials.push(material);
     return material;
   }
 
-  /**
-   * Update the day/night cycle
-   * @param {number} dayTimer - Normalized time (0-1) representing 24-hour cycle
-   * @param {number} delta - Time since last frame in seconds
-   * @param {THREE.Vector3} playerPos - Current player position
-   */
   updateDayCycle(dayTimer, delta, playerPos) {
     if (!this._enabled) return;
     
@@ -112,190 +72,55 @@ export class Lighting {
     // Update skybox
     this.skybox.update(dayTimer, delta, playerPos);
 
-    // Calculate time-based factors
+    // Simple sun position
     const angle = dayTimer * Math.PI * 2;
-    const nightFactor = Math.max(0, -Math.sin(angle));
-    const dawnFactor = Math.sin(angle + Math.PI * 0.5) * 0.5 + 0.5;
-    const duskFactor = Math.sin(angle - Math.PI * 0.5) * 0.5 + 0.5;
-    
-    // Update sun position and intensity
-    const sunHeight = Math.sin(angle) * 800 + 300;
-    const sunX = Math.cos(angle) * 1000;
-    const sunZ = Math.cos(angle * 0.3) * 500; // Add some variation
+    const sunHeight = Math.sin(angle) * 400 + 200;
+    const sunX = Math.cos(angle) * 600;
     
     this.sunLight.position.set(
       playerPos.x + sunX,
       playerPos.y + sunHeight,
-      playerPos.z + sunZ
+      playerPos.z + 200
     );
     this.sunLight.target.position.copy(playerPos);
     this.sunLight.target.updateMatrixWorld();
 
-    // Update moon position (opposite of sun)
+    // Simple moon position (opposite of sun)
     const moonAngle = (dayTimer + 0.5) * Math.PI * 2;
-    const moonHeight = Math.sin(moonAngle) * 600 + 400;
-    const moonX = Math.cos(moonAngle) * 800;
-    const moonZ = Math.cos(moonAngle * 0.3) * 400;
+    const moonHeight = Math.sin(moonAngle) * 300 + 250;
+    const moonX = Math.cos(moonAngle) * 500;
     
     this.moonLight.position.set(
       playerPos.x + moonX,
       playerPos.y + moonHeight,
-      playerPos.z + moonZ
+      playerPos.z - 200
     );
     this.moonLight.target.position.copy(playerPos);
     this.moonLight.target.updateMatrixWorld();
 
-    // Calculate light intensities based on time of day
-    const sunIntensity = this._calculateSunIntensity(dayTimer);
-    const ambientIntensity = this._calculateAmbientIntensity(dayTimer);
-    const hemisphereIntensity = this._calculateHemisphereIntensity(dayTimer);
-
-    // Update light colors based on time of day
-    const sunColor = this._calculateSunColor(dayTimer);
-    const ambientColor = this._calculateAmbientColor(dayTimer);
-    const skyColor = this._calculateSkyColor(dayTimer);
-    const groundColor = this._calculateGroundColor(dayTimer);
-
-    // Apply light settings
-    this.sunLight.intensity = sunIntensity;
-    this.sunLight.color.setHex(sunColor);
+    // Simple light intensity based on day/night
+    const isDay = Math.sin(angle) > 0;
+    const dayFactor = Math.max(0, Math.sin(angle));
     
-    this.ambient.intensity = ambientIntensity;
-    this.ambient.color.setHex(ambientColor);
-    
-    this.hemisphereLight.intensity = hemisphereIntensity;
-    this.hemisphereLight.color.setHex(skyColor);
-    this.hemisphereLight.groundColor.setHex(groundColor);
+    this.sunLight.intensity = isDay ? 0.8 : 0.0;
+    this.moonLight.intensity = !isDay ? 0.2 : 0.0;
+    this.ambient.intensity = isDay ? 0.5 : 0.1;
 
-    // Update moon light
-    this.moonLight.intensity = (1 - sunIntensity) * 0.2;
+    // Simple sky color change
+    if (isDay) {
+      this.scene.background.setHex(0x87ceeb); // Day sky blue
+    } else {
+      this.scene.background.setHex(0x000033); // Night dark blue
+    }
     
-    // Update scene background and fog
-    this.scene.background.setHex(skyColor);
+    // Update fog if it exists
     if (this.scene.fog && this.scene.fog.color) {
-      this.scene.fog.color.setHex(skyColor);
+      this.scene.fog.color.copy(this.scene.background);
     }
   }
 
-  _calculateSunIntensity(dayTimer) {
-    // 6 AM to 6 PM: full intensity
-    // 6 PM to 6 AM: fade out
-    const normalizedTime = (dayTimer * 24) % 24;
-    
-    if (normalizedTime >= 6 && normalizedTime <= 18) {
-      // Daytime
-      const peakTime = 12;
-      const distanceFromPeak = Math.abs(normalizedTime - peakTime);
-      const peakFactor = 1 - Math.pow(distanceFromPeak / 6, 2);
-      return this.config.sunIntensityDay * peakFactor;
-    } else {
-      // Nighttime
-      const dawnDistance = normalizedTime < 6 ? 6 - normalizedTime : normalizedTime - 18;
-      const fadeFactor = Math.min(1, dawnDistance / 1); // 1 hour transition
-      return this.config.sunIntensityNight + 
-             (this.config.sunIntensityDay - this.config.sunIntensityNight) * 
-             (1 - fadeFactor);
-    }
-  }
-
-  _calculateAmbientIntensity(dayTimer) {
-    const normalizedTime = (dayTimer * 24) % 24;
-    
-    if (normalizedTime >= 6 && normalizedTime <= 18) {
-      // Daytime
-      return this.config.ambientIntensityDay;
-    } else {
-      // Nighttime
-      return this.config.ambientIntensityNight;
-    }
-  }
-
-  _calculateHemisphereIntensity(dayTimer) {
-    const normalizedTime = (dayTimer * 24) % 24;
-    
-    if (normalizedTime >= 6 && normalizedTime <= 18) {
-      return this.config.hemisphereIntensityDay;
-    } else {
-      return this.config.hemisphereIntensityNight;
-    }
-  }
-
-  _calculateSunColor(dayTimer) {
-    const normalizedTime = (dayTimer * 24) % 24;
-    
-    if (normalizedTime >= 5 && normalizedTime <= 7) {
-      // Dawn
-      const progress = (normalizedTime - 5) / 2;
-      return this._lerpHex(
-        this.config.sunColorDawn,
-        this.config.sunColorDay,
-        progress
-      );
-    } else if (normalizedTime >= 17 && normalizedTime <= 19) {
-      // Dusk
-      const progress = (normalizedTime - 17) / 2;
-      return this._lerpHex(
-        this.config.sunColorDay,
-        this.config.sunColorDusk,
-        progress
-      );
-    } else if (normalizedTime >= 7 && normalizedTime <= 17) {
-      // Day
-      return this.config.sunColorDay;
-    } else {
-      // Night
-      return this.config.sunColorNight;
-    }
-  }
-
-  _calculateAmbientColor(dayTimer) {
-    const normalizedTime = (dayTimer * 24) % 24;
-    
-    if (normalizedTime >= 6 && normalizedTime <= 18) {
-      return this.config.ambientColorDay;
-    } else {
-      return this.config.ambientColorNight;
-    }
-  }
-
-  _calculateSkyColor(dayTimer) {
-    const normalizedTime = (dayTimer * 24) % 24;
-    
-    if (normalizedTime >= 5 && normalizedTime <= 7) {
-      // Dawn
-      const progress = (normalizedTime - 5) / 2;
-      return this._lerpHex(0x000033, this.config.skyColorDay, progress);
-    } else if (normalizedTime >= 17 && normalizedTime <= 19) {
-      // Dusk
-      const progress = (normalizedTime - 17) / 2;
-      return this._lerpHex(this.config.skyColorDay, 0x000033, progress);
-    } else if (normalizedTime >= 7 && normalizedTime <= 17) {
-      // Day
-      return this.config.skyColorDay;
-    } else {
-      // Night
-      return this.config.skyColorNight;
-    }
-  }
-
-  _calculateGroundColor(dayTimer) {
-    const normalizedTime = (dayTimer * 24) % 24;
-    
-    if (normalizedTime >= 6 && normalizedTime <= 18) {
-      return this.config.groundColorDay;
-    } else {
-      return this.config.groundColorNight;
-    }
-  }
-
-  _lerpHex(color1, color2, factor) {
-    const c1 = new THREE.Color(color1);
-    const c2 = new THREE.Color(color2);
-    return c1.lerp(c2, factor).getHex();
-  }
-
-  setTimeScale(scale) {
-    this._timeScale = scale;
+  setFog(fog) {
+    this.scene.fog = fog;
   }
 
   getTimeOfDay() {
@@ -316,17 +141,14 @@ export class Lighting {
   }
 
   dispose() {
-    // Dispose skybox
     if (this.skybox) {
       this.skybox.dispose();
     }
 
-    // Remove lights
     this.scene.remove(this.ambient);
     this.scene.remove(this.sunLight);
     this.scene.remove(this.sunLight.target);
     this.scene.remove(this.moonLight);
     this.scene.remove(this.moonLight.target);
-    this.scene.remove(this.hemisphereLight);
   }
 }
