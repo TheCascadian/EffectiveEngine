@@ -30,6 +30,7 @@ export class Engine {
 
     this.outline = this._createOutline();
 
+    this.statsPanel = document.getElementById("stats");
     // DOM Nodes for Detailed Stats
     this.statPos = document.getElementById("statPos");
     this.statFacing = document.getElementById("statFacing");
@@ -134,8 +135,14 @@ export class Engine {
       if (e.key === "F3") this._toggleDebugPanel();
       // Debug overlay with F4
       if (e.key === "F4" && this.debugTools) {
-        this.debugTools.debugOverlay.style.display = 
-          this.debugTools.debugOverlay.style.display === "none" ? "block" : "none";
+        const overlayVisible = this.debugTools.debugOverlay.style.display !== "none";
+        const panelVisible = this.debugTools.debugPanel.style.display !== "none";
+        this.debugTools.debugOverlay.style.display = overlayVisible ? "none" : "block";
+        // Only toggle stats panel if debug panel is not visible
+        // If debug panel is visible, it already handles stats panel visibility
+        if (!panelVisible) {
+          this.statsPanel.style.display = overlayVisible ? "block" : "none";
+        }
       }
     });
 
@@ -184,6 +191,7 @@ export class Engine {
     if (this.debugTools) {
       const isVisible = this.debugTools.debugPanel.style.display !== "none";
       this.debugTools.debugPanel.style.display = isVisible ? "none" : "block";
+      this.statsPanel.style.display = isVisible ? "block" : "none";
       this.debugTools.debugOverlay.style.display = isVisible ? "none" : "block";
     }
   }
