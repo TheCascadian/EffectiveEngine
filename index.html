@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>WebGPU Voxel Engine – Amplified Terrain</title>
+    <title>EffectiveEngine - Enhanced Voxel Engine</title>
     <link rel="stylesheet" href="style.css" />
     <!-- Import map must stay in the HTML -->
     <script type="importmap">
@@ -23,9 +23,9 @@
 <body>
     <div id="blocker">
         <div>
-            WebGPU – Amplified Terrain<br />
-            <small>WASD to move, Space to jump, L‑Click to destroy, R‑Click to place<br>Keys 1‑9 to select
-                blocks<br>Massive mountains, floating islands & overhangs</small>
+            EffectiveEngine<br />
+            <small>WASD to move, Space to jump, LClick to destroy, RClick to place<br>Keys 19 to select
+                blocks<br>F1 to toggle debug panel<br>Massive mountains, floating islands & overhangs</small>
         </div>
     </div>
     <div id="crosshair"></div>
@@ -52,6 +52,7 @@
         <div class="slot" style="background:#ffffff;" data-block="8">8</div>
         <div class="slot" style="background:#3a3f44;" data-block="9">9</div>
     </div>
+    
     <div id="pauseMenu">
         <div class="panel">
             <h2>Settings</h2>
@@ -77,5 +78,8 @@
             <button id="resumeBtn">Resume</button>
         </div>
     </div>
+
+    <!-- Notification system -->
+    <div id="notification" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.8); color: #fff; padding: 20px; border-radius: 8px; display: none; z-index: 1000; font-family: 'Courier New', monospace;"></div>
 </body>
 </html>

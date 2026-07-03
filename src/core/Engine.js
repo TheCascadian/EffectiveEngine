@@ -4,6 +4,7 @@ import { Lighting } from "./Lighting.js";
 import { World } from "../world/World.js";
 import { Mesher } from "../world/Mesher.js";
 import { Player } from "../entities/Player.js";
+import { DebugTools } from "./DebugTools.js";
 import { CONFIG } from "../config.js";
 
 export class Engine {
@@ -38,8 +39,18 @@ export class Engine {
     this.statBlocks = document.getElementById("statBlocks");
     this.statFlight = document.getElementById("statFlight");
 
+    // Initialize debug tools
+    this.debugTools = new DebugTools(
+      this.scene, 
+      this.camera, 
+      this.renderer.renderer,
+      null, // world will be set after init
+      this.lighting
+    );
+
     this._setupBasicUI();
     this._setupBlockSelection();
+    this._setupDebugControls();
 
     this._lastFrameTime = 0;
     this._frameCount = 0;
@@ -85,6 +96,9 @@ export class Engine {
     );
     this.world.init(seed);
 
+    // Set world reference in debug tools
+    this.debugTools.world = this.world;
+
     this._setupAdvancedUI();
     this._setupBlockModification();
 
@@ -116,11 +130,62 @@ export class Engine {
 
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape") this._togglePause();
+      // Debug toggle with F1
+      if (e.key === "F1") this._toggleDebugPanel();
+      // Debug pick with F2
+      if (e.key === "F2" && this.debugTools) {
+        this.debugTools.debugPanel.style.display = 
+          this.debugTools.debugPanel.style.display === "none" ? "block" : "none";
+      }
     });
 
     document
       .getElementById("resumeBtn")
       .addEventListener("click", () => this._togglePause());
+  }
+
+  _setupDebugControls() {
+    // Add debug toggle button to pause menu
+    const debugBtn = document.createElement('button');
+    debugBtn.id = 'debugBtn';
+    debugBtn.textContent = 'Debug Tools';
+    debugBtn.style.cssText = `
+      padding: 12px;
+      margin-top: 4px;
+      border: 2px solid #7a2a34;
+      background: #3a1f24;
+      color: #d8cfc8;
+      font-family: 'Courier New', monospace;
+      font-size: 13px;
+      font-weight: bold;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      cursor: pointer;
+      box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.6);
+    `;
+    debugBtn.addEventListener('click', () => this._toggleDebugPanel());
+    
+    const pauseMenuPanel = this.pauseMenu.querySelector('.panel');
+    if (pauseMenuPanel) {
+      pauseMenuPanel.appendChild(debugBtn);
+    }
+
+    // Add debug object picking
+    if (this.renderer.renderer) {
+      this.renderer.renderer.domElement.addEventListener('click', (event) => {
+        if (this.debugTools && this.player.isLocked && !this.isPaused) {
+          this.debugTools.pickObject(event);
+        }
+      });
+    }
+  }
+
+  _toggleDebugPanel() {
+    if (this.debugTools) {
+      const isVisible = this.debugTools.debugPanel.style.display !== "none";
+      this.debugTools.debugPanel.style.display = isVisible ? "none" : "block";
+      this.debugTools.debugOverlay.style.display = isVisible ? "none" : "block";
+    }
   }
 
   _setupAdvancedUI() {
@@ -291,17 +356,9 @@ export class Engine {
     this.statPos.textContent = `XYZ: ${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}`;
     this.statFacing.textContent = `Facing: ${this.player.getFacing()}`;
 
-    // Compute Time of Day (0 progress = Dawn/6AM)
-    const hoursRaw = (this._dayTimer * 24 + 6) % 24;
-    const hrs = Math.floor(hoursRaw).toString().padStart(2, "0");
-    const mins = Math.floor((hoursRaw % 1) * 60)
-      .toString()
-      .padStart(2, "0");
-    let phase = "Night";
-    if (hoursRaw > 5 && hoursRaw < 8) phase = "Dawn";
-    else if (hoursRaw >= 8 && hoursRaw < 17) phase = "Day";
-    else if (hoursRaw >= 17 && hoursRaw < 20) phase = "Dusk";
-    this.statTime.textContent = `Time: ${hrs}:${mins} (${phase})`;
+    // Get time info from lighting system
+    const timeInfo = this.lighting.getTimeString();
+    this.statTime.textContent = `Time: ${timeInfo.hours}:${timeInfo.minutes} (${timeInfo.phase})`;
 
     this.statPerf.textContent = `FPS: ${this._currentFPS} | Speed: ${this.player.currentSpeed.toFixed(1)} m/s`;
     this.statChunks.textContent = `Chunks: ${stats.fullChunks} | LOD: ${stats.lodChunks}`;
@@ -318,11 +375,19 @@ export class Engine {
     this._lastFrameTime = now;
 
     if (!this._dayTimer) this._dayTimer = 0;
-    this._dayTimer += delta / 3600.0;
+    
+    // 60 IRL minutes = 1 game day
+    // So we need to scale the time: delta * (24 hours / 60 minutes) = delta * 24
+    this._dayTimer += delta * (24 / 60);
     this._dayTimer %= 1.0;
 
-    // Lighting now perfectly bounds the player context natively!
+    // Update lighting with 60-minute day cycle
     this.lighting.updateDayCycle(this._dayTimer, delta, this.camera.position);
+
+    // Update debug tools
+    if (this.debugTools) {
+      this.debugTools.update(delta);
+    }
 
     if (this.player.isLocked && !this.isPaused) {
       this.player.update(delta, this.world);
@@ -354,5 +419,6 @@ export class Engine {
     this.renderer.destroy();
     this.lighting.dispose?.();
     this.world.dispose?.();
+    this.debugTools.dispose?.();
   }
 }

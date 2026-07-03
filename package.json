@@ -1,0 +1,20 @@
+{
+  "name": "thecascadian__effectiveengine",
+  "version": "1.0.0",
+  "description": "three.js voxel engine WIP",
+  "main": "world.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TheCascadian/EffectiveEngine.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/TheCascadian/EffectiveEngine/issues"
+  },
+  "homepage": "https://github.com/TheCascadian/EffectiveEngine#readme"
+}
