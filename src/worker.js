@@ -138,15 +138,21 @@ function continentShape(cont) {
 }
 
 // --- Dynamic World Calculations ---
-function calculateBaseHeight(wx, wz, maxH, seaLevel) {
-  let [wwx, wwz] = domainWarp(wx, wz, 150, 0.002);
-  [wwx, wwz] = domainWarp(wwx, wwz, 50, 0.008);
+function calculateBaseHeight(wx, wz, maxH, seaLevel, terrainParams = {}) {
+  const domainWarpStrength1 = terrainParams.domainWarpStrength1 || 150;
+  const domainWarpFreq1 = terrainParams.domainWarpFreq1 || 0.002;
+  const domainWarpStrength2 = terrainParams.domainWarpStrength2 || 50;
+  const domainWarpFreq2 = terrainParams.domainWarpFreq2 || 0.008;
+  
+  let [wwx, wwz] = domainWarp(wx, wz, domainWarpStrength1, domainWarpFreq1);
+  [wwx, wwz] = domainWarp(wwx, wwz, domainWarpStrength2, domainWarpFreq2);
   
   const cont = getContinentalness(wwx, wwz);
   const landFactor = continentShape(cont);
   
   // Base structural height scales directly with the set world height
-  const baseMtnScale = maxH * 0.45;
+  const mountainScale = terrainParams.mountainScale || 0.45;
+  const baseMtnScale = maxH * mountainScale;
   let height = landFactor * baseMtnScale + 16;
   
   // Plateaus (Terracing effect for cliffs)
@@ -161,18 +167,19 @@ function calculateBaseHeight(wx, wz, maxH, seaLevel) {
   }
 
   // Extreme Peaks (Ridged)
-  const ridge = ridgedFbm2D(wwx * 0.003, wwz * 0.003, 6, 2.2, 0.5);
+  const noiseFreq = terrainParams.noiseFreq || 0.003;
+  const ridge = ridgedFbm2D(wwx * noiseFreq, wwz * noiseFreq, 6, 2.2, 0.5);
   const mtnMask = Math.max(0, (landFactor - 0.4) / 0.6); 
-  const peakScale = maxH * 0.5; // VERY tall peaks
+  const peakScale = maxH * (terrainParams.peakScale || 0.5); // VERY tall peaks
   height += Math.pow(ridge, 1.4) * peakScale * Math.pow(mtnMask, 1.2);
   
   // High frequency geological detail
-  height += fbm2D(wwx * 0.015, wwz * 0.015, 5, 2.0, 0.5) * 60 * (0.2 + landFactor * 0.8);
+  height += fbm2D(wwx * (noiseFreq * 5), wwz * (noiseFreq * 5), 5, 2.0, 0.5) * 60 * (0.2 + landFactor * 0.8);
   
   // Ravines (Deep narrow jagged cuts)
   const ravineWarpX = fbm2D(wx * 0.005, wz * 0.005, 2) * 200;
   const ravineWarpZ = fbm2D(wx * 0.005 + 100, wz * 0.005 + 100, 2) * 200;
-  const crack = Math.abs(noise3((wx + ravineWarpX) * 0.0015, 0, (wz + ravineWarpZ) * 0.0015));
+  const crack = Math.abs(noise3((wx + ravineWarpX) * noiseFreq, 0, (wz + ravineWarpZ) * noiseFreq));
   if (crack < 0.03 && landFactor > 0.2) {
        const carve = (0.03 - crack) / 0.03; // steep gradient
        const ravineDepth = (maxH * 0.25) * Math.pow(carve, 0.5); // Steep canyon walls

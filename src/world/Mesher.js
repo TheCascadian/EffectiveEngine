@@ -134,6 +134,7 @@ class WorkerPool {
         size: CONFIG.CHUNK_SIZE,
         height: CONFIG.CHUNK_HEIGHT,
         seaLevel: CONFIG.SEA_LEVEL,
+        terrainParams: this.terrainParams,
       });
       dispatched++;
     }
@@ -157,6 +158,11 @@ export class Mesher {
       onJobDispatch,
       seed,
     );
+    this.terrainParams = {};
+  }
+
+  setTerrainParams(params) {
+    this.terrainParams = { ...this.terrainParams, ...params };
   }
 
   // --- FIX: FULL CPU GREEDY MESHER IMPLEMENTATION ---

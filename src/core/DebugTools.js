@@ -26,6 +26,11 @@ export class DebugTools {
     this.performanceGraph = null;
     this.sceneGraph = null;
 
+    // Terrain regeneration state
+    this._terrainDirty = false;
+    this.terrainInputs = null;
+    this.terrainParams = null;
+
     // Debug objects
     this.debugObjects = [];
     this.gridHelper = null;
@@ -275,6 +280,349 @@ export class DebugTools {
     cameraDiv.appendChild(clearPathBtn);
 
     this.debugPanel.appendChild(cameraDiv);
+
+    // Terrain Regeneration Panel
+    this._createTerrainRegenPanel();
+  }
+
+  _createTerrainRegenPanel() {
+    const terrainDiv = document.createElement("div");
+    terrainDiv.style.cssText = `
+      margin-top: 15px;
+      padding-top: 10px;
+      border-top: 1px solid rgba(255,255,255,0.1);
+    `;
+    terrainDiv.innerHTML = '<h3 style="margin: 0 0 10px 0; font-size: 12px; color: #0ff;">Terrain Regeneration</h3>';
+
+    // Chunk Size
+    const chunkSizeRow = document.createElement("div");
+    chunkSizeRow.style.cssText = "display: flex; align-items: center; margin: 4px 0;";
+    const chunkSizeLabel = document.createElement("label");
+    chunkSizeLabel.textContent = "Chunk Size:";
+    chunkSizeLabel.style.cssText = "font-size: 11px; color: #ccc; width: 100px;";
+    const chunkSizeInput = document.createElement("input");
+    chunkSizeInput.type = "number";
+    chunkSizeInput.id = "terrain_chunkSize";
+    chunkSizeInput.value = 32;
+    chunkSizeInput.min = "8";
+    chunkSizeInput.max = "128";
+    chunkSizeInput.style.cssText = "width: 60px; padding: 2px; font-size: 11px; background: #333; color: #fff; border: 1px solid #555;";
+    const chunkSizeValue = document.createElement("span");
+    chunkSizeValue.id = "terrain_chunkSize_value";
+    chunkSizeValue.textContent = "32";
+    chunkSizeValue.style.cssText = "margin-left: 5px; font-size: 11px; color: #0ff;";
+    chunkSizeRow.appendChild(chunkSizeLabel);
+    chunkSizeRow.appendChild(chunkSizeInput);
+    chunkSizeRow.appendChild(chunkSizeValue);
+    terrainDiv.appendChild(chunkSizeRow);
+
+    // Chunk Height
+    const chunkHeightRow = document.createElement("div");
+    chunkHeightRow.style.cssText = "display: flex; align-items: center; margin: 4px 0;";
+    const chunkHeightLabel = document.createElement("label");
+    chunkHeightLabel.textContent = "Chunk Height:";
+    chunkHeightLabel.style.cssText = "font-size: 11px; color: #ccc; width: 100px;";
+    const chunkHeightInput = document.createElement("input");
+    chunkHeightInput.type = "number";
+    chunkHeightInput.id = "terrain_chunkHeight";
+    chunkHeightInput.value = 1536;
+    chunkHeightInput.min = "64";
+    chunkHeightInput.max = "2048";
+    chunkHeightInput.style.cssText = "width: 60px; padding: 2px; font-size: 11px; background: #333; color: #fff; border: 1px solid #555;";
+    const chunkHeightValue = document.createElement("span");
+    chunkHeightValue.id = "terrain_chunkHeight_value";
+    chunkHeightValue.textContent = "1536";
+    chunkHeightValue.style.cssText = "margin-left: 5px; font-size: 11px; color: #0ff;";
+    chunkHeightRow.appendChild(chunkHeightLabel);
+    chunkHeightRow.appendChild(chunkHeightInput);
+    chunkHeightRow.appendChild(chunkHeightValue);
+    terrainDiv.appendChild(chunkHeightRow);
+
+    // Sea Level
+    const seaLevelRow = document.createElement("div");
+    seaLevelRow.style.cssText = "display: flex; align-items: center; margin: 4px 0;";
+    const seaLevelLabel = document.createElement("label");
+    seaLevelLabel.textContent = "Sea Level:";
+    seaLevelLabel.style.cssText = "font-size: 11px; color: #ccc; width: 100px;";
+    const seaLevelInput = document.createElement("input");
+    seaLevelInput.type = "number";
+    seaLevelInput.id = "terrain_seaLevel";
+    seaLevelInput.value = 60;
+    seaLevelInput.min = "0";
+    seaLevelInput.max = "1000";
+    seaLevelInput.style.cssText = "width: 60px; padding: 2px; font-size: 11px; background: #333; color: #fff; border: 1px solid #555;";
+    const seaLevelValue = document.createElement("span");
+    seaLevelValue.id = "terrain_seaLevel_value";
+    seaLevelValue.textContent = "60";
+    seaLevelValue.style.cssText = "margin-left: 5px; font-size: 11px; color: #0ff;";
+    seaLevelRow.appendChild(seaLevelLabel);
+    seaLevelRow.appendChild(seaLevelInput);
+    seaLevelRow.appendChild(seaLevelValue);
+    terrainDiv.appendChild(seaLevelRow);
+
+    // Full Detail Radius
+    const detailRadiusRow = document.createElement("div");
+    detailRadiusRow.style.cssText = "display: flex; align-items: center; margin: 4px 0;";
+    const detailRadiusLabel = document.createElement("label");
+    detailRadiusLabel.textContent = "Detail Radius:";
+    detailRadiusLabel.style.cssText = "font-size: 11px; color: #ccc; width: 100px;";
+    const detailRadiusInput = document.createElement("input");
+    detailRadiusInput.type = "number";
+    detailRadiusInput.id = "terrain_detailRadius";
+    detailRadiusInput.value = 6;
+    detailRadiusInput.min = "2";
+    detailRadiusInput.max = "20";
+    detailRadiusInput.style.cssText = "width: 60px; padding: 2px; font-size: 11px; background: #333; color: #fff; border: 1px solid #555;";
+    const detailRadiusValue = document.createElement("span");
+    detailRadiusValue.id = "terrain_detailRadius_value";
+    detailRadiusValue.textContent = "6";
+    detailRadiusValue.style.cssText = "margin-left: 5px; font-size: 11px; color: #0ff;";
+    detailRadiusRow.appendChild(detailRadiusLabel);
+    detailRadiusRow.appendChild(detailRadiusInput);
+    detailRadiusRow.appendChild(detailRadiusValue);
+    terrainDiv.appendChild(detailRadiusRow);
+
+    // Mountain Scale (0-1)
+    const mountainScaleRow = document.createElement("div");
+    mountainScaleRow.style.cssText = "display: flex; align-items: center; margin: 4px 0;";
+    const mountainScaleLabel = document.createElement("label");
+    mountainScaleLabel.textContent = "Mountain Scale:";
+    mountainScaleLabel.style.cssText = "font-size: 11px; color: #ccc; width: 100px;";
+    const mountainScaleInput = document.createElement("input");
+    mountainScaleInput.type = "range";
+    mountainScaleInput.id = "terrain_mountainScale";
+    mountainScaleInput.value = 0.45;
+    mountainScaleInput.min = "0.1";
+    mountainScaleInput.max = "1.0";
+    mountainScaleInput.step = "0.05";
+    mountainScaleInput.style.cssText = "width: 120px; padding: 2px; font-size: 11px; background: #333; color: #fff; border: 1px solid #555;";
+    const mountainScaleValue = document.createElement("span");
+    mountainScaleValue.id = "terrain_mountainScale_value";
+    mountainScaleValue.textContent = "0.45";
+    mountainScaleValue.style.cssText = "margin-left: 5px; font-size: 11px; color: #0ff;";
+    mountainScaleRow.appendChild(mountainScaleLabel);
+    mountainScaleRow.appendChild(mountainScaleInput);
+    mountainScaleRow.appendChild(mountainScaleValue);
+    terrainDiv.appendChild(mountainScaleRow);
+
+    // Peak Scale (0-1)
+    const peakScaleRow = document.createElement("div");
+    peakScaleRow.style.cssText = "display: flex; align-items: center; margin: 4px 0;";
+    const peakScaleLabel = document.createElement("label");
+    peakScaleLabel.textContent = "Peak Scale:";
+    peakScaleLabel.style.cssText = "font-size: 11px; color: #ccc; width: 100px;";
+    const peakScaleInput = document.createElement("input");
+    peakScaleInput.type = "range";
+    peakScaleInput.id = "terrain_peakScale";
+    peakScaleInput.value = 0.5;
+    peakScaleInput.min = "0.1";
+    peakScaleInput.max = "1.0";
+    peakScaleInput.step = "0.05";
+    peakScaleInput.style.cssText = "width: 120px; padding: 2px; font-size: 11px; background: #333; color: #fff; border: 1px solid #555;";
+    const peakScaleValue = document.createElement("span");
+    peakScaleValue.id = "terrain_peakScale_value";
+    peakScaleValue.textContent = "0.5";
+    peakScaleValue.style.cssText = "margin-left: 5px; font-size: 11px; color: #0ff;";
+    peakScaleRow.appendChild(peakScaleLabel);
+    peakScaleRow.appendChild(peakScaleInput);
+    peakScaleRow.appendChild(peakScaleValue);
+    terrainDiv.appendChild(peakScaleRow);
+
+    // Noise Frequency
+    const noiseFreqRow = document.createElement("div");
+    noiseFreqRow.style.cssText = "display: flex; align-items: center; margin: 4px 0;";
+    const noiseFreqLabel = document.createElement("label");
+    noiseFreqLabel.textContent = "Noise Frequency:";
+    noiseFreqLabel.style.cssText = "font-size: 11px; color: #ccc; width: 100px;";
+    const noiseFreqInput = document.createElement("input");
+    noiseFreqInput.type = "range";
+    noiseFreqInput.id = "terrain_noiseFreq";
+    noiseFreqInput.value = 0.002;
+    noiseFreqInput.min = "0.0005";
+    noiseFreqInput.max = "0.01";
+    noiseFreqInput.step = "0.0005";
+    noiseFreqInput.style.cssText = "width: 120px; padding: 2px; font-size: 11px; background: #333; color: #fff; border: 1px solid #555;";
+    const noiseFreqValue = document.createElement("span");
+    noiseFreqValue.id = "terrain_noiseFreq_value";
+    noiseFreqValue.textContent = "0.002";
+    noiseFreqValue.style.cssText = "margin-left: 5px; font-size: 11px; color: #0ff;";
+    noiseFreqRow.appendChild(noiseFreqLabel);
+    noiseFreqRow.appendChild(noiseFreqInput);
+    noiseFreqRow.appendChild(noiseFreqValue);
+    terrainDiv.appendChild(noiseFreqRow);
+
+    // Regenerate Button
+    const regenBtn = document.createElement("button");
+    regenBtn.textContent = "Regenerate Terrain";
+    regenBtn.id = "terrain_regenBtn";
+    regenBtn.style.cssText = `
+      background: #0f0;
+      color: #000;
+      border: none;
+      padding: 8px 12px;
+      margin-top: 10px;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: bold;
+      width: 100%;
+    `;
+    regenBtn.addEventListener("click", () => this.regenerateTerrain());
+    terrainDiv.appendChild(regenBtn);
+
+    // Status message
+    const statusDiv = document.createElement("div");
+    statusDiv.id = "terrain_status";
+    statusDiv.textContent = "Ready";
+    statusDiv.style.cssText = "margin-top: 5px; font-size: 10px; color: #0f0; text-align: center;";
+    terrainDiv.appendChild(statusDiv);
+
+    this.debugPanel.appendChild(terrainDiv);
+
+    // Store references
+    this.terrainInputs = {
+      chunkSize: chunkSizeInput,
+      chunkHeight: chunkHeightInput,
+      seaLevel: seaLevelInput,
+      detailRadius: detailRadiusInput,
+      mountainScale: mountainScaleInput,
+      peakScale: peakScaleInput,
+      noiseFreq: noiseFreqInput,
+      status: statusDiv
+    };
+
+    // Set up debounced input handlers
+    this._setupTerrainInputHandlers();
+  }
+
+  _setupTerrainInputHandlers() {
+    const inputs = this.terrainInputs;
+    
+    // Debounce function
+    const debounce = (func, wait) => {
+      let timeout;
+      return (...args) => {
+        clearTimeout(timeout);
+        timeout = setTimeout(() => func.apply(this, args), wait);
+      };
+    };
+
+    // Update value displays and mark for regeneration
+    const updateValue = (inputId, valueId) => {
+      const input = document.getElementById(inputId);
+      const value = document.getElementById(valueId);
+      if (input && value) {
+        value.textContent = input.value;
+        this._terrainDirty = true;
+        inputs.status.textContent = "Pending regeneration...";
+        inputs.status.style.color = "#ff0";
+      }
+    };
+
+    // Add debounced input listeners
+    inputs.chunkSize.addEventListener("input", debounce(() => {
+      updateValue("terrain_chunkSize", "terrain_chunkSize_value");
+    }, 500));
+
+    inputs.chunkHeight.addEventListener("input", debounce(() => {
+      updateValue("terrain_chunkHeight", "terrain_chunkHeight_value");
+    }, 500));
+
+    inputs.seaLevel.addEventListener("input", debounce(() => {
+      updateValue("terrain_seaLevel", "terrain_seaLevel_value");
+    }, 500));
+
+    inputs.detailRadius.addEventListener("input", debounce(() => {
+      updateValue("terrain_detailRadius", "terrain_detailRadius_value");
+    }, 500));
+
+    inputs.mountainScale.addEventListener("input", debounce(() => {
+      updateValue("terrain_mountainScale", "terrain_mountainScale_value");
+    }, 500));
+
+    inputs.peakScale.addEventListener("input", debounce(() => {
+      updateValue("terrain_peakScale", "terrain_peakScale_value");
+    }, 500));
+
+    inputs.noiseFreq.addEventListener("input", debounce(() => {
+      updateValue("terrain_noiseFreq", "terrain_noiseFreq_value");
+    }, 500));
+  }
+
+  regenerateTerrain() {
+    if (!this.world) {
+      this.terrainInputs.status.textContent = "Error: World not initialized";
+      this.terrainInputs.status.style.color = "#f00";
+      return;
+    }
+
+    const inputs = this.terrainInputs;
+    
+    // Get values from inputs
+    const chunkSize = parseInt(inputs.chunkSize.value) || 32;
+    const chunkHeight = parseInt(inputs.chunkHeight.value) || 1536;
+    const seaLevel = parseInt(inputs.seaLevel.value) || 60;
+    const detailRadius = parseInt(inputs.detailRadius.value) || 6;
+    const mountainScale = parseFloat(inputs.mountainScale.value) || 0.45;
+    const peakScale = parseFloat(inputs.peakScale.value) || 0.5;
+    const noiseFreq = parseFloat(inputs.noiseFreq.value) || 0.002;
+
+    // Update CONFIG values
+    CONFIG.CHUNK_SIZE = chunkSize;
+    CONFIG.CHUNK_HEIGHT = chunkHeight;
+    CONFIG.SEA_LEVEL = seaLevel;
+    CONFIG.FULL_DETAIL_RADIUS = detailRadius;
+    
+    // Store terrain parameters for worker (these will be passed via mesher)
+    if (!this.terrainParams) {
+      this.terrainParams = {};
+    }
+    this.terrainParams.mountainScale = mountainScale;
+    this.terrainParams.peakScale = peakScale;
+    this.terrainParams.noiseFreq = noiseFreq;
+
+    // Update LOD rings based on new detail radius
+    let currentRadius = detailRadius;
+    for (let i = 0; i < CONFIG.LOD_RINGS.length; i++) {
+      currentRadius += detailRadius * Math.pow(2, i);
+      CONFIG.LOD_RINGS[i].radius = currentRadius;
+    }
+
+    // Update camera far plane and fog
+    if (this.camera) {
+      const maxDistUnits = CONFIG.LOD_RINGS[CONFIG.LOD_RINGS.length - 1].radius * CONFIG.CHUNK_SIZE;
+      if (this.scene.fog) this.scene.fog.far = maxDistUnits;
+      this.camera.far = maxDistUnits + 1000;
+      this.camera.updateProjectionMatrix();
+    }
+
+    // Pass terrain parameters to mesher
+    if (this.world && this.world.mesher) {
+      this.world.mesher.setTerrainParams(this.terrainParams);
+    }
+
+    // Reset the world to regenerate with new parameters
+    inputs.status.textContent = "Regenerating terrain...";
+    inputs.status.style.color = "#0ff";
+    
+    this.world.reset();
+    
+    // Force camera update to trigger chunk loading
+    if (this.camera) {
+      this.world.update(this.camera.position, this.camera.getWorldDirection(new THREE.Vector3()));
+    }
+
+    // Clear dirty flag
+    this._terrainDirty = false;
+
+    // Update status after a short delay
+    setTimeout(() => {
+      inputs.status.textContent = "Terrain regenerated!";
+      inputs.status.style.color = "#0f0";
+      setTimeout(() => {
+        inputs.status.textContent = "Ready";
+        inputs.status.style.color = "#0ff";
+      }, 2000);
+    }, 100);
   }
 
   _addDebugCheckbox(setting, label, defaultValue) {
