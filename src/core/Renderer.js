@@ -15,7 +15,7 @@ export class Renderer {
       0.5,
       40000,
     );
-    this.camera.position.set(8, 460, 8);
+    this.camera.position.set(8, 120, 8); // Dropped starting height to 120
 
     this.renderer = null;
     this._resizeListener = this._onResize.bind(this);

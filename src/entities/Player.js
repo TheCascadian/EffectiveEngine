@@ -1,6 +1,8 @@
+// entities/Player.js
 import * as THREE from "three";
 import { PointerLockControls } from "three/addons/controls/PointerLockControls.js";
 import { CONFIG } from "../config.js";
+import { BLOCK_TYPES } from "../blockRegistry.js";
 
 export class Player {
   constructor(camera, domElement) {
@@ -13,7 +15,6 @@ export class Player {
     this.isFlying = false;
     this.sprintMultiplier = 1.0;
 
-    // Track real speed & position
     this.lastPos = this.position.clone();
     this.currentSpeed = 0;
 
@@ -31,7 +32,6 @@ export class Player {
 
   #setupInput() {
     window.addEventListener("keydown", (e) => {
-      // Ignore inputs if the user is typing in the console
       if (document.activeElement && document.activeElement.tagName === "INPUT")
         return;
 
@@ -52,12 +52,8 @@ export class Player {
     });
   }
 
-  /**
-   * Get compass direction the player is facing
-   */
   getFacing() {
     const f = this.getForward();
-    // Calculate angle in degrees
     const angle = Math.atan2(f.x, f.z) * (180 / Math.PI);
 
     if (angle > -45 && angle <= 45) return "South (+Z)";
@@ -66,9 +62,6 @@ export class Player {
     return "North (-Z)";
   }
 
-  /**
-   * Update player physics and movement.
-   */
   update(delta, world) {
     if (!this.controls.isLocked) return;
 
@@ -95,14 +88,21 @@ export class Player {
 
     // Flying
     if (this.isFlying) {
-      let speed = CONFIG.PLAYER_SPEED * 2.0;
+      // 5x normal speed for regular flying. 25x normal speed for stress-test sprinting!
+      // (CONFIG.PLAYER_SPEED is 10, so this reaches 250 blocks per second)
+      let speed =
+        CONFIG.PLAYER_SPEED * (this.sprintMultiplier > 1.0 ? 25.0 : 5.0);
+
       if (moveVec.lengthSq() > 0)
         moveVec.normalize().multiplyScalar(speed * delta);
+
       pos.x += moveVec.x;
       pos.z += moveVec.z;
+
       let vertical = 0;
-      if (this.keys[" "]) vertical = CONFIG.PLAYER_SPEED * 2.0 * delta;
-      if (this.keys.shift) vertical = -CONFIG.PLAYER_SPEED * 2.0 * delta;
+      if (this.keys[" "]) vertical = speed * delta;
+      if (this.keys.shift) vertical = -speed * delta; // Shift triggers both descend AND the massive speed boost
+
       pos.y += vertical;
       pos.y = Math.max(1, Math.min(CONFIG.CHUNK_HEIGHT * 2, pos.y));
     }
@@ -118,14 +118,15 @@ export class Player {
         Math.floor(footY),
         Math.floor(pos.z),
       );
-      const inWater = headBlock === 7 || footBlock === 7;
+      const inWater =
+        headBlock === BLOCK_TYPES.WATER || footBlock === BLOCK_TYPES.WATER;
       let currentSpeed =
         CONFIG.PLAYER_SPEED * (inWater ? 0.6 : 1.0) * this.sprintMultiplier;
 
       if (moveVec.lengthSq() > 0)
         moveVec.normalize().multiplyScalar(currentSpeed * delta);
 
-      // Collision detection (simplified)
+      // Collision detection
       const collides = (x, y, z) => {
         const hw = 0.3,
           hh = 1.0;
@@ -139,7 +140,8 @@ export class Player {
           for (let bx = minX; bx <= maxX; bx++) {
             for (let bz = minZ; bz <= maxZ; bz++) {
               const block = world.getBlock(bx, by, bz);
-              if (block > 0 && block !== 7 && block !== 255) return true;
+              if (block > 0 && block !== BLOCK_TYPES.WATER && block !== 255)
+                return true;
             }
           }
         }
@@ -173,7 +175,6 @@ export class Player {
       }
     }
 
-    // Calculate absolute speed (meters per second)
     const dist = pos.distanceTo(this.lastPos);
     this.currentSpeed = dist / delta;
     this.lastPos.copy(pos);

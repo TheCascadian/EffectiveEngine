@@ -1,74 +1,31 @@
+// world/Mesher.js
 import * as THREE from "three";
-import {
-  CONFIG,
-  BLOCK_COLORS,
-  randFromCoords,
-  strideForLOD,
-} from "../config.js";
+import { CONFIG, randFromCoords, strideForLOD } from "../config.js";
+import { BLOCK_COLORS } from "../blockRegistry.js";
 import { WORKER_SRC } from "../worker.js";
 
-// ---------- Block Color Map (Matches your worker) ----------
 function blockColor(type) {
-  switch (type) {
-    case 1:
-      return [0.361, 0.663, 0.141];
-    case 2:
-      return [0.475, 0.333, 0.227];
-    case 3:
-      return [0.533, 0.549, 0.553];
-    case 4:
-      return [0.89, 0.788, 0.525];
-    case 5:
-      return [0.361, 0.251, 0.2];
-    case 6:
-      return [0.227, 0.478, 0.157];
-    case 7:
-      return [0.259, 0.647, 0.961];
-    case 8:
-      return [1.0, 1.0, 1.0];
-    case 9:
-      return [0.227, 0.247, 0.267];
-    case 10:
-      return [0.541, 0.169, 0.886];
-    case 11:
-      return [0.294, 0.0, 0.51];
-    case 12:
-      return [0.867, 0.627, 0.867];
-    case 13:
-      return [0.2, 1.0, 0.706];
-    case 14:
-      return [1.0, 0.2, 1.0];
-    case 15:
-      return [0.824, 0.706, 0.549];
-    case 16:
-      return [0.804, 0.361, 0.361];
-    case 17:
-      return [0.871, 0.722, 0.529];
-    case 18:
-      return [0.133, 0.545, 0.133];
-    case 19:
-      return [0.102, 0.102, 0.102];
-    case 20:
-      return [1.0, 0.6, 0.0];
-    case 21:
-      return [0.545, 0.0, 0.0];
-    case 22:
-      return [0.0, 0.392, 0.0];
-    case 23:
-      return [0.678, 0.847, 0.902];
-    default:
-      return [1.0, 0.0, 1.0];
+  if (type >= 0 && type < BLOCK_COLORS.length) {
+    return BLOCK_COLORS[type];
   }
+  return [1.0, 0.0, 1.0];
 }
 
-// ---------- WorkerPool (complete) ----------
 class WorkerPool {
-  constructor(workerSrc, poolSize, onJobDone, onJobDispatch, seed) {
+  constructor(
+    workerSrc,
+    poolSize,
+    onJobDone,
+    onJobDispatch,
+    seed,
+    blockColors,
+  ) {
     this.onJobDone = onJobDone;
     this.onJobDispatch = onJobDispatch;
     this.freeWorkers = [];
     this.pendingJobs = [];
     this.generation = 0;
+    this.terrainParams = {};
 
     const blob = new Blob([workerSrc], { type: "application/javascript" });
     const url = URL.createObjectURL(blob);
@@ -93,7 +50,7 @@ class WorkerPool {
         }
         this.freeWorkers.push(w);
       };
-      w.postMessage({ type: "init", seed });
+      w.postMessage({ type: "init", seed, blockColors });
       this.freeWorkers.push(w);
     }
   }
@@ -113,7 +70,8 @@ class WorkerPool {
     this.pendingJobs = [];
   }
 
-  update(maxDispatch = 2) {
+  // OPTIMIZATION: Increased default dispatch to 4 to better saturate workers
+  update(maxDispatch = 4) {
     let dispatched = 0;
     while (
       dispatched < maxDispatch &&
@@ -135,37 +93,40 @@ class WorkerPool {
         height: CONFIG.CHUNK_HEIGHT,
         seaLevel: CONFIG.SEA_LEVEL,
         terrainParams: this.terrainParams,
+        blocks: job.blocks || null,
       });
       dispatched++;
     }
   }
 }
 
-// ---------- Mesher ----------
 export class Mesher {
   constructor() {
     this.workerPool = null;
+    this.terrainParams = {};
   }
 
   initWorkerPool(seed, onJobDone, onJobDispatch) {
     const poolSize = navigator.hardwareConcurrency
       ? Math.min(6, Math.max(2, navigator.hardwareConcurrency - 2))
       : 3;
+
     this.workerPool = new WorkerPool(
       WORKER_SRC,
       poolSize,
       onJobDone,
       onJobDispatch,
       seed,
+      BLOCK_COLORS,
     );
     this.terrainParams = {};
   }
 
   setTerrainParams(params) {
     this.terrainParams = { ...this.terrainParams, ...params };
+    if (this.workerPool) this.workerPool.terrainParams = this.terrainParams;
   }
 
-  // --- FIX: FULL CPU GREEDY MESHER IMPLEMENTATION ---
   buildGeometry({
     blocks,
     lod,
@@ -176,22 +137,28 @@ export class Mesher {
     height,
     getBlock,
   }) {
-    // Use the provided blocks array directly (from chunk.blocks)
-    // Or fallback to getBlock if we're simulating (not used here, but keeps compatibility)
+    // OPTIMIZATION: Fast early-exit for completely empty chunks
+    if (blocks) {
+      let isEmpty = true;
+      for (let i = 0; i < blocks.length; i++) {
+        if (blocks[i] !== 0) {
+          isEmpty = false;
+          break;
+        }
+      }
+      if (isEmpty) return null;
+    }
+
     const blockAt = (x, y, z) => {
-      if (x < 0 || x >= size || y < 0 || y >= height || z < 0 || z >= size) {
-        return y <= 60 ? 7 : 0;
+      // OPTIMIZATION: Streamlined boundary check
+      if (x >= 0 && x < size && y >= 0 && y < height && z >= 0 && z < size) {
+        if (blocks) return blocks[(y * size + z) * size + x];
+        return getBlock(originX + x * scaleXZ, y, originZ + z * scaleXZ);
       }
-      // Main thread has direct block access
-      if (blocks) {
-        return blocks[(y * size + z) * size + x];
-      }
-      // fallback for unloaded chunks
-      return getBlock(originX + x * scaleXZ, y, originZ + z * scaleXZ);
+      return y <= 60 ? 7 : 0;
     };
 
     const positions = [],
-      normals = [],
       colors = [],
       indices = [];
     const dims = [size, height, size];
@@ -243,29 +210,18 @@ export class Mesher {
               du[u] = w;
               const dv = [0, 0, 0];
               dv[v] = h;
-
               const blockType = Math.abs(c);
               const col = blockColor(blockType);
-              const wx = originX + x[0] * scaleXZ,
-                wy = x[1],
-                wz = originZ + x[2] * scaleXZ;
-              const isWater = blockType === 7;
-              const vary = isWater
-                ? 1.0
-                : 0.92 + randFromCoords(wx, wy, wz) * 0.16;
 
+              const vary = 1.0;
               let slopeShade = 0.85;
               if (d === 1) slopeShade = c > 0 ? 1.0 : 0.6;
               else if (d === 0) slopeShade = 0.75;
               else slopeShade = 0.8;
 
-              const nx = d === 0 ? (c > 0 ? 1 : -1) : 0;
-              const ny = d === 1 ? (c > 0 ? 1 : -1) : 0;
-              const nz = d === 2 ? (c > 0 ? 1 : -1) : 0;
-
-              const fColR = col[0] * vary * slopeShade;
-              const fColG = col[1] * vary * slopeShade;
-              const fColB = col[2] * vary * slopeShade;
+              const fColR = Math.round(col[0] * vary * slopeShade * 255);
+              const fColG = Math.round(col[1] * vary * slopeShade * 255);
+              const fColB = Math.round(col[2] * vary * slopeShade * 255);
 
               const baseIdx = positions.length / 3;
               let p0, p1, p2, p3;
@@ -307,7 +263,6 @@ export class Mesher {
 
               [p0, p1, p2, p3].forEach((p) => {
                 positions.push(p[0], p[1], p[2]);
-                normals.push(nx, ny, nz);
                 colors.push(fColR, fColG, fColB);
               });
               indices.push(
@@ -331,24 +286,19 @@ export class Mesher {
         }
       }
     }
-
     if (positions.length === 0) return null;
 
-    // Build BufferGeometry directly to save time
     const bufferGeo = new THREE.BufferGeometry();
     bufferGeo.setAttribute(
       "position",
       new THREE.Float32BufferAttribute(positions, 3),
     );
     bufferGeo.setAttribute(
-      "normal",
-      new THREE.Float32BufferAttribute(normals, 3),
-    );
-    bufferGeo.setAttribute(
       "color",
-      new THREE.Float32BufferAttribute(colors, 3),
-    );
+      new THREE.Uint8BufferAttribute(colors, 3, true),
+    ); // 'true' enables normalized colors
     bufferGeo.setIndex(new THREE.Uint16BufferAttribute(indices, 1));
+    bufferGeo.computeVertexNormals();
     bufferGeo.computeBoundingSphere();
 
     return bufferGeo;
@@ -378,7 +328,19 @@ export class Mesher {
     if (this.workerPool) this.workerPool.cancel();
   }
 
-  dispose() {
-    // optional cleanup
+  dispose() {}
+
+  submitRemesh(chunk) {
+    if (!this.workerPool) return;
+    const id =
+      this.workerPool.generation + "_" + this.workerPool.pendingJobs.length;
+    this.workerPool.pendingJobs.push({
+      id,
+      type: "remesh",
+      cx: chunk.coord.x,
+      cz: chunk.coord.z,
+      blocks: chunk.blocks, // Pass the exact block data
+      chunkRef: chunk,
+    });
   }
 }

@@ -1,6 +1,7 @@
-
+// world/World.js
 import * as THREE from "three";
 import { CONFIG, strideForLOD, lodForDistance } from "../config.js";
+import { BLOCK_TYPES } from "../blockRegistry.js";
 import { Chunk } from "./Chunk.js";
 import { Mesher } from "./Mesher.js";
 
@@ -11,8 +12,8 @@ export class World {
     this.lodMaterials = lodMaterials;
     this.mesher = mesher;
 
-    this.chunks = new Map(); // full detail chunks
-    this.lodChunks = new Map(); // LOD chunks
+    this.chunks = new Map();
+    this.lodChunks = new Map();
 
     this.meshQueue = [];
     this.remeshQueue = [];
@@ -24,16 +25,11 @@ export class World {
     this.totalBlocks = 0;
     this.loadedChunks = [];
 
-    // Callback used to dirty shadow maps when scene geometry updates
     this.onMeshApplied = null;
-
-    // Will be set during init
     this.seed = 0;
+    this._lastFullUpdate = 0;
   }
 
-  /**
-   * Initialize with a world seed; also sets up worker pool.
-   */
   init(seed) {
     this.seed = seed;
     this.mesher.initWorkerPool(
@@ -50,10 +46,27 @@ export class World {
   }
 
   #onWorkerDone(type, id, cx, cz, lod, blocks, geometry) {
-    let chunk =
-      type === "full" ? this.getChunk(cx, cz) : this.getLODChunk(lod, cx, cz);
+    // Determine which chunk to use
+    let chunk;
+    if (type === "remesh") {
+      chunk = this.getChunk(cx, cz);
+    } else if (type === "full") {
+      chunk = this.getChunk(cx, cz);
+    } else {
+      chunk = this.getLODChunk(lod, cx, cz);
+    }
+
     if (chunk && chunk.state === "GENERATING") {
-      chunk.blocks = blocks;
+      if (type === "full") {
+        chunk.blocks = blocks;
+      } else if (type === "remesh") {
+        // No need to update blocks; we only need the geometry
+        // But keep the existing blocks intact.
+        // (blocks is null for remesh, but we don't need it)
+      } else {
+        blocks = null; // LOD chunk - discard block data
+      }
+
       chunk.nextGeometry = geometry;
       this.#transitionChunkState(chunk, "GENERATED");
       this.#transitionChunkState(chunk, "MESH_QUEUED");
@@ -61,7 +74,6 @@ export class World {
     }
   }
 
-  // ---------- Chunk accessors ----------
   getChunk(cx, cz) {
     const key = `${cx},${cz}`;
     const chunk = this.chunks.get(key);
@@ -92,15 +104,13 @@ export class World {
     this.lodChunks.delete(`${lod}:${cx},${cz}`);
   }
 
-  // ---------- State transitions ----------
   #transitionChunkState(chunk, newState) {
     chunk.state = newState;
   }
 
-  // ---------- Block access ----------
   getBlock(wx, wy, wz) {
     const size = CONFIG.CHUNK_SIZE;
-    if (wy < 0) return 9;
+    if (wy < 0) return BLOCK_TYPES.COBBLESTONE;
     if (wy >= CONFIG.CHUNK_HEIGHT) return 0;
     const cx = Math.floor(wx / size);
     const cz = Math.floor(wz / size);
@@ -110,7 +120,7 @@ export class World {
       const lz = ((wz % size) + size) % size;
       return chunk.blocks[(wy * size + lz) * size + lx];
     }
-    // Check LOD chunks
+
     for (let lod = 1; lod <= CONFIG.LOD_RINGS.length; lod++) {
       const stride = strideForLOD(lod);
       const span = size * stride;
@@ -138,26 +148,40 @@ export class World {
     const lz = ((wz % size) + size) % size;
     const idx = (wy * size + lz) * size + lx;
     if (chunk.blocks[idx] === type) return false;
+
+    // Update the block
     chunk.blocks[idx] = type;
     chunk.version++;
+
+    // Mark the primary chunk as dirty and immediately queue it for remeshing
     if (chunk.state === "VISIBLE" || chunk.state === "READY") {
       this.#transitionChunkState(chunk, "DIRTY");
+      // --- FIX: Push to remesh queue immediately so it gets sorted and meshed this frame ---
+      if (!this.remeshQueue.includes(chunk)) {
+        this.remeshQueue.push(chunk);
+      }
     }
-    // Mark neighbors dirty
+
+    // Mark adjacent chunks as dirty (in case the edit touches a boundary)
     const markDirty = (ncx, ncz) => {
       const n = this.getChunk(ncx, ncz);
       if (n && (n.state === "VISIBLE" || n.state === "READY")) {
         this.#transitionChunkState(n, "DIRTY");
+        // --- FIX: Push neighbors to remesh queue immediately as well ---
+        if (!this.remeshQueue.includes(n)) {
+          this.remeshQueue.push(n);
+        }
       }
     };
+
     if (lx === 0) markDirty(cx - 1, cz);
     else if (lx === size - 1) markDirty(cx + 1, cz);
     if (lz === 0) markDirty(cx, cz - 1);
     else if (lz === size - 1) markDirty(cx, cz + 1);
+
     return true;
   }
 
-  // ---------- Scene integration ----------
   #applyMesh(chunk) {
     if (chunk.mesh) {
       this.scene.remove(chunk.mesh);
@@ -197,13 +221,20 @@ export class World {
     }
   }
 
-  // ---------- Update logic (formerly ChunkScheduler) ----------
   update(playerPos, cameraForward) {
-    this.#updateTargetChunks(playerPos, cameraForward);
-    this.#queueDirtyChunks();
-    this.#cancelObsoleteWork();
-    this.#updatePriorities(playerPos, cameraForward);
-    this.#dispatch(4);
+    const now = performance.now();
+
+    // --- FIX: If there are queued player edits, bypass the 250ms throttle entirely ---
+    if (this.remeshQueue.length > 0 || now - this._lastFullUpdate > 250) {
+      this.#updateTargetChunks(playerPos, cameraForward);
+      this.#queueDirtyChunks();
+      this.#cancelObsoleteWork();
+      this.#updatePriorities(playerPos, cameraForward);
+      this._lastFullUpdate = now;
+    }
+
+    // Dispatch workers every frame
+    this.#dispatch(6);
   }
 
   #updateTargetChunks(playerPos, cameraForward) {
@@ -214,7 +245,7 @@ export class World {
     const playerChunkX = Math.floor(px / size);
     const playerChunkZ = Math.floor(pz / size);
 
-    // ---- Load full detail chunks ----
+    // 1. Request full detail chunks
     const fullRad = CONFIG.FULL_DETAIL_RADIUS;
     for (let dx = -fullRad; dx <= fullRad; dx++) {
       for (let dz = -fullRad; dz <= fullRad; dz++) {
@@ -225,24 +256,22 @@ export class World {
         const centerZ = cz * size + size / 2;
         const distSq = (centerX - px) ** 2 + (centerZ - pz) ** 2;
         if (distSq > fullRadBlocks * fullRadBlocks) continue;
-
         let chunk = this.getChunk(cx, cz);
-        if (
-          !chunk ||
-          chunk.state === "UNLOADED" ||
-          chunk.state === "UNLOADING"
-        ) {
-          if (!chunk) {
-            chunk = new Chunk(0, cx, cz);
-            this.setChunk(cx, cz, chunk);
-          }
+        if (!chunk) {
+          // Brand new chunk, create and request it.
+          chunk = new Chunk(0, cx, cz);
+          this.setChunk(cx, cz, chunk);
+          this.#transitionChunkState(chunk, "REQUESTED");
+          this.mesher.requestGeneration(chunk);
+        } else if (chunk.state === "UNLOADED" || chunk.state === "UNLOADING") {
+          // It exists but was unloaded. Re-request it WITHOUT destroying the object.
           this.#transitionChunkState(chunk, "REQUESTED");
           this.mesher.requestGeneration(chunk);
         }
       }
     }
 
-    // ---- Load LOD chunks ----
+    // 2. Request LOD chunks
     for (let i = 0; i < CONFIG.LOD_RINGS.length; i++) {
       const ring = CONFIG.LOD_RINGS[i];
       const lod = i + 1;
@@ -266,7 +295,6 @@ export class World {
           const distSq = (centerX - px) ** 2 + (centerZ - pz) ** 2;
           if (distSq > outerRadBlocks * outerRadBlocks) continue;
 
-          // Check if any sub-chunk is outside inner radius
           let hasOutsideSubChunk = false;
           for (let sx = 0; sx < stride; sx++) {
             for (let sz = 0; sz < stride; sz++) {
@@ -284,7 +312,6 @@ export class World {
           }
           if (!hasOutsideSubChunk) continue;
 
-          // Frustum culling: skip chunks behind the camera
           const dxF = centerX - px,
             dzF = centerZ - pz;
           if (
@@ -294,15 +321,15 @@ export class World {
             continue;
 
           let chunk = this.getLODChunk(lod, lcx, lcz);
-          if (
-            !chunk ||
+          if (!chunk) {
+            chunk = new Chunk(lod, lcx, lcz);
+            this.setLODChunk(lod, lcx, lcz, chunk);
+            this.#transitionChunkState(chunk, "REQUESTED");
+            this.mesher.requestGeneration(chunk);
+          } else if (
             chunk.state === "UNLOADED" ||
             chunk.state === "UNLOADING"
           ) {
-            if (!chunk) {
-              chunk = new Chunk(lod, lcx, lcz);
-              this.setLODChunk(lod, lcx, lcz, chunk);
-            }
             this.#transitionChunkState(chunk, "REQUESTED");
             this.mesher.requestGeneration(chunk);
           }
@@ -310,56 +337,89 @@ export class World {
       }
     }
 
-    // ---- Unload stale chunks ----
+    // 3. --- FIX: Clean, intelligent unloading transitions ---
     const getTargetLOD = (cx, cz) => {
       const centerX = cx * size + size / 2;
       const centerZ = cz * size + size / 2;
       const distSqBlocks = (centerX - px) ** 2 + (centerZ - pz) ** 2;
       return lodForDistance(distSqBlocks / (size * size));
     };
+
     const isChunkReady = (state) =>
       ["READY", "VISIBLE", "DIRTY", "REMESH_QUEUED"].includes(state);
 
+    // Checks the correct map depending on what the target LOD should be
+    const isTargetReady = (cx, cz, targetLOD) => {
+      if (targetLOD === 0) return isChunkReady(this.getChunk(cx, cz)?.state);
+      const targetStride = strideForLOD(targetLOD);
+      const tcx = Math.floor(cx / targetStride);
+      const tcz = Math.floor(cz / targetStride);
+      return isChunkReady(this.getLODChunk(targetLOD, tcx, tcz)?.state);
+    };
+
+    // 3a. Unload stale Full Detail chunks (LOD 0)
     for (const chunk of this.chunks.values()) {
+      if (chunk.state === "UNLOADING" || chunk.state === "UNLOADED") continue;
+
       const targetLOD = getTargetLOD(chunk.coord.x, chunk.coord.z);
-      if (targetLOD === 0) continue;
-      if (targetLOD === -1 || isChunkReady(chunk.state)) {
-        if (chunk.state !== "UNLOADING" && chunk.state !== "UNLOADED") {
-          this.#transitionChunkState(chunk, "UNLOADING");
-          this.#removeMesh(chunk);
-        }
+      if (targetLOD === 0) continue; // Keep it, we still need it.
+
+      // If we walked away, only drop this chunk if its LOD replacement is ready, OR if it's completely out of bounds (-1)
+      if (
+        targetLOD === -1 ||
+        isTargetReady(chunk.coord.x, chunk.coord.z, targetLOD)
+      ) {
+        this.#transitionChunkState(chunk, "UNLOADING");
+        this.#removeMesh(chunk);
+        // --- FIX: Clear heavy data but KEEP in the map so the loop doesn't crash/insta-request ---
+        chunk.blocks = null;
+        chunk.nextGeometry = null;
+        this.#transitionChunkState(chunk, "UNLOADED");
       }
     }
 
+    // 3b. Unload stale LOD chunks
     for (const chunk of this.lodChunks.values()) {
+      if (chunk.state === "UNLOADING" || chunk.state === "UNLOADED") continue;
+
       const stride = strideForLOD(chunk.lod);
       let keep = false;
+
+      // Sample 4 points inside the LOD chunk to see if we should keep it
       const testPoints = [
         [0, 0],
-        [stride / 2, stride / 2],
+        [Math.floor(stride / 2), Math.floor(stride / 2)],
         [stride - 1, 0],
         [0, stride - 1],
       ];
+
       for (const [sx, sz] of testPoints) {
-        const cx = chunk.coord.x * stride + sx;
+        const cx = chunk.coord.x * stride + sx; // cx is in LOD 0 coords
         const cz = chunk.coord.z * stride + sz;
         const targetLOD = getTargetLOD(cx, cz);
+
         if (targetLOD === chunk.lod) {
-          keep = true;
+          keep = true; // Still within this specific LOD's ring.
           break;
         }
-        if (
-          targetLOD !== -1 &&
-          targetLOD < chunk.lod &&
-          !isChunkReady(this.getChunk(cx, cz)?.state)
-        ) {
-          keep = true;
-          break;
+
+        // If the player moved and this chunk needs to transition to a different LOD (higher or lower)...
+        if (targetLOD !== -1 && targetLOD !== chunk.lod) {
+          // ...KEEP this chunk visually until the replacement chunk finishes generating.
+          if (!isTargetReady(cx, cz, targetLOD)) {
+            keep = true;
+            break;
+          }
         }
       }
-      if (!keep && chunk.state !== "UNLOADING" && chunk.state !== "UNLOADED") {
+
+      if (!keep) {
         this.#transitionChunkState(chunk, "UNLOADING");
         this.#removeMesh(chunk);
+        // --- FIX: Free block data but KEEP in map ---
+        chunk.blocks = null;
+        chunk.nextGeometry = null;
+        this.#transitionChunkState(chunk, "UNLOADED");
       }
     }
   }
@@ -371,10 +431,11 @@ export class World {
         if (!this.remeshQueue.includes(chunk)) this.remeshQueue.push(chunk);
       }
     }
+
     for (const chunk of this.lodChunks.values()) {
       if (chunk.state === "DIRTY") {
-        this.#transitionChunkState(chunk, "REMESH_QUEUED");
-        if (!this.remeshQueue.includes(chunk)) this.remeshQueue.push(chunk);
+        chunk.skipRemesh = true;
+        this.#transitionChunkState(chunk, "READY");
       }
     }
   }
@@ -446,19 +507,14 @@ export class World {
       bufferGeo = new THREE.BufferGeometry();
       bufferGeo.setAttribute(
         "position",
-        new THREE.Float32BufferAttribute(new Float32Array(geo.positions), 3),
-      );
-      bufferGeo.setAttribute(
-        "normal",
-        new THREE.Float32BufferAttribute(new Float32Array(geo.normals), 3),
+        new THREE.Float32BufferAttribute(geo.positions, 3),
       );
       bufferGeo.setAttribute(
         "color",
-        new THREE.Float32BufferAttribute(new Float32Array(geo.colors), 3),
+        new THREE.Float32BufferAttribute(geo.colors, 3),
       );
-      bufferGeo.setIndex(
-        new THREE.Uint16BufferAttribute(new Uint16Array(geo.indices), 1),
-      );
+      bufferGeo.setIndex(new THREE.Uint16BufferAttribute(geo.indices, 1));
+      bufferGeo.computeVertexNormals();
       bufferGeo.computeBoundingSphere();
     }
 
@@ -467,11 +523,10 @@ export class World {
     const yOffset = lod > 0 ? -0.02 : 0;
     mesh.position.set(chunk.originX, yOffset, chunk.originZ);
     mesh.renderOrder = chunk.lod > 0 ? -1 : 0;
-    
-    // NATIVE SHADOWS!
+
     mesh.castShadow = chunk.lod === 0;
     mesh.receiveShadow = true;
-    
+
     mesh.userData.blockCount = bufferGeo.index ? bufferGeo.index.count / 3 : 0;
     mesh.matrixAutoUpdate = false;
     mesh.updateMatrix();
@@ -482,7 +537,24 @@ export class World {
   #dispatch(maxJobs) {
     this.mesher.dispatchWorkers(maxJobs);
 
+    if (this.meshQueue.length === 0 && this.remeshQueue.length === 0) {
+      return;
+    }
+
     let meshedThisFrame = 0;
+
+    // --- Process REMESH (player edits) FIRST with absolute priority ---
+    while (meshedThisFrame < maxJobs && this.remeshQueue.length > 0) {
+      const chunk = this.remeshQueue.shift();
+      if (chunk.state !== "REMESH_QUEUED") continue;
+
+      // Offload remeshing to worker thread
+      this.#transitionChunkState(chunk, "GENERATING");
+      this.mesher.submitRemesh(chunk);
+      meshedThisFrame++;
+    }
+
+    // --- Process NEW chunks (background generation) with remaining budget ---
     while (meshedThisFrame < maxJobs && this.meshQueue.length > 0) {
       const chunk = this.meshQueue.shift();
       if (chunk.state !== "MESH_QUEUED") continue;
@@ -493,21 +565,8 @@ export class World {
       chunk.isInitialMesh = true;
       meshedThisFrame++;
     }
-
-    let remeshedThisFrame = 0;
-    while (remeshedThisFrame < maxJobs && this.remeshQueue.length > 0) {
-      const chunk = this.remeshQueue.shift();
-      if (chunk.state !== "REMESH_QUEUED") continue;
-      this.#transitionChunkState(chunk, "MESHING");
-      chunk.nextMesh = this.#buildMeshForChunk(chunk);
-      this.#applyMesh(chunk);
-      this.#transitionChunkState(chunk, "READY");
-      chunk.isInitialMesh = false;
-      remeshedThisFrame++;
-    }
   }
-
-  // ---- Stats ----
+  
   getStats() {
     return {
       fullChunks: this.chunks.size,
@@ -517,7 +576,6 @@ export class World {
     };
   }
 
-  // ---- Reset ----
   reset() {
     this.mesher.cancelAll();
     this.meshQueue = [];
