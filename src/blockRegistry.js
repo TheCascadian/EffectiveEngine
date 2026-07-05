@@ -27,48 +27,48 @@ export const BLOCK_TYPES = {
   FLOWER: 24,
 };
 
-// Each entry: { id, name, color: [r,g,b], solid, transparent?, lightValue? }
+// Updated vibrant colors (sRGB 0-255, converted to 0-1 for Three.js)
 export const BLOCK_DEFINITIONS = [
   { id: 0, name: "Air", color: [1, 0, 1], solid: false, transparent: true },
-  { id: 1, name: "Grass", color: [0.361, 0.663, 0.141], solid: true },
-  { id: 2, name: "Dirt", color: [0.475, 0.333, 0.227], solid: true },
-  { id: 3, name: "Stone", color: [0.533, 0.549, 0.553], solid: true },
-  { id: 4, name: "Sand", color: [0.89, 0.788, 0.525], solid: true },
-  { id: 5, name: "Wood", color: [0.361, 0.251, 0.2], solid: true },
-  { id: 6, name: "Leaf", color: [0.227, 0.478, 0.157], solid: true },
+  { id: 1, name: "Grass", color: [0.42, 0.78, 0.22], solid: true }, // Vibrant Green
+  { id: 2, name: "Dirt", color: [0.61, 0.41, 0.22], solid: true }, // Rich Brown
+  { id: 3, name: "Stone", color: [0.65, 0.65, 0.68], solid: true }, // Light Grey
+  { id: 4, name: "Sand", color: [0.94, 0.87, 0.68], solid: true }, // Bright Beige
+  { id: 5, name: "Wood", color: [0.49, 0.35, 0.25], solid: true }, // Dark Oak
+  { id: 6, name: "Leaf", color: [0.29, 0.59, 0.2], solid: true }, // Forest Green
   {
     id: 7,
     name: "Water",
-    color: [0.259, 0.647, 0.961],
+    color: [0.2, 0.5, 0.95],
     solid: false,
     transparent: true,
-  },
-  { id: 8, name: "Snow", color: [1, 1, 1], solid: true },
-  { id: 9, name: "Cobblestone", color: [0.227, 0.247, 0.267], solid: true },
+  }, // Deep Blue
+  { id: 8, name: "Snow", color: [1.0, 1.0, 1.0], solid: true },
+  { id: 9, name: "Cobblestone", color: [0.45, 0.48, 0.5], solid: true },
   {
     id: 10,
     name: "Glowstone",
-    color: [0.867, 0.847, 0.267],
+    color: [1.0, 0.95, 0.6],
     solid: true,
     lightValue: 15,
   },
-  { id: 11, name: "Obsidian", color: [0.102, 0.102, 0.102], solid: true },
+  { id: 11, name: "Obsidian", color: [0.1, 0.1, 0.12], solid: true },
   {
     id: 12,
     name: "Glass",
-    color: [0.678, 0.847, 0.902],
+    color: [0.85, 0.95, 1.0],
     solid: false,
     transparent: true,
   },
-  { id: 13, name: "Emerald", color: [0.2, 1.0, 0.706], solid: true },
-  { id: 14, name: "Ruby", color: [1.0, 0.2, 1.0], solid: true },
-  { id: 15, name: "Gold", color: [0.824, 0.706, 0.549], solid: true },
-  { id: 16, name: "Iron", color: [0.804, 0.361, 0.361], solid: true },
-  { id: 17, name: "Coal", color: [0.294, 0.0, 0.51], solid: true },
-  { id: 18, name: "Gravel", color: [0.541, 0.169, 0.886], solid: true },
-  { id: 19, name: "Clay", color: [0.133, 0.545, 0.133], solid: true },
-  { id: 20, name: "Brick", color: [0.804, 0.361, 0.361], solid: true },
-  { id: 21, name: "Wool", color: [0.871, 0.722, 0.529], solid: true },
+  { id: 13, name: "Emerald", color: [0.2, 0.85, 0.6], solid: true },
+  { id: 14, name: "Ruby", color: [1.0, 0.2, 0.4], solid: true },
+  { id: 15, name: "Gold", color: [0.95, 0.8, 0.4], solid: true },
+  { id: 16, name: "Iron", color: [0.85, 0.85, 0.9], solid: true },
+  { id: 17, name: "Coal", color: [0.15, 0.15, 0.15], solid: true },
+  { id: 18, name: "Gravel", color: [0.55, 0.52, 0.5], solid: true },
+  { id: 19, name: "Clay", color: [0.65, 0.75, 0.85], solid: true },
+  { id: 20, name: "Brick", color: [0.75, 0.3, 0.25], solid: true },
+  { id: 21, name: "Wool", color: [1.0, 1.0, 1.0], solid: true },
   {
     id: 22,
     name: "Torch",
@@ -80,20 +80,19 @@ export const BLOCK_DEFINITIONS = [
   {
     id: 23,
     name: "Tall Grass",
-    color: [0.2, 0.8, 0.1],
+    color: [0.3, 0.7, 0.1],
     solid: false,
     transparent: true,
   },
   {
     id: 24,
     name: "Flower",
-    color: [1.0, 0.2, 0.5],
+    color: [1.0, 0.4, 0.6],
     solid: false,
     transparent: true,
   },
 ];
 
-// Helper functions
 export function getBlockColor(id) {
   const def = BLOCK_DEFINITIONS.find((b) => b.id === id);
   return def ? def.color : [1, 0, 1];

@@ -1,41 +1,62 @@
 import * as THREE from "three";
 import { Skybox } from "./Skybox.js";
+import { CONFIG } from "../config.js";
 
-/**
- * Simple Lighting System with day/night cycle
- */
 export class Lighting {
   constructor(scene, camera) {
     this.scene = scene;
     this.camera = camera;
 
-    // Initialize skybox
     this.skybox = new Skybox(scene, camera);
 
-    // Simple ambient light
-    this.ambient = new THREE.AmbientLight(0xffffff, 0.5);
+    this.ambient = new THREE.AmbientLight(0xffffff, 0.55);
     this.scene.add(this.ambient);
 
-    // Simple directional light for sun
-    this.sunLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    this.sunLight.position.set(200, 500, 200);
-    this.sunLight.castShadow = false;
+    // ============================================================
+    // 1. MAIN DIRECTIONAL LIGHT (Sun)
+    // ============================================================
+    this.sunLight = new THREE.DirectionalLight(0xffeedd, 1.35);
+    this.sunLight.position.set(300, 600, 200);
+    this.sunLight.castShadow = true;
+
     this.scene.add(this.sunLight);
     this.scene.add(this.sunLight.target);
 
-    // Simple directional light for moon
-    this.moonLight = new THREE.DirectionalLight(0xbbbbff, 0.2);
+    // High resolution for large terrain expanses
+    this.sunLight.shadow.mapSize.width = 8192;
+    this.sunLight.shadow.mapSize.height = 8192;
+
+    const d = 350;
+    this.sunLight.shadow.camera.left = -d;
+    this.sunLight.shadow.camera.right = d;
+    this.sunLight.shadow.camera.top = d;
+    this.sunLight.shadow.camera.bottom = -d;
+    this.sunLight.shadow.camera.near = 50;
+    this.sunLight.shadow.camera.far = 900;
+    this.sunLight.shadow.camera.updateProjectionMatrix();
+
+    // Default small bias for BasicShadowMap
+    this.sunLight.shadow.bias = -0.0001;
+    this.sunLight.shadow.normalBias = 0.0;
+
+    // 2. FILL LIGHT
+    this.fillLight = new THREE.DirectionalLight(0xccddff, 0.45);
+    this.fillLight.position.set(-200, 300, -100);
+    this.fillLight.castShadow = false;
+    this.scene.add(this.fillLight);
+    this.scene.add(this.fillLight.target);
+
+    // 3. MOON LIGHT
+    this.moonLight = new THREE.DirectionalLight(0xbbbbff, 0.35);
     this.moonLight.position.set(-200, 300, -200);
     this.moonLight.castShadow = false;
     this.scene.add(this.moonLight);
     this.scene.add(this.moonLight.target);
 
-    // State
     this._dayTimer = 0;
     this._enabled = true;
     this._skyboxEnabled = true;
 
-    // Set initial scene background
     this.scene.background = new THREE.Color(0x87ceeb);
   }
 
@@ -43,6 +64,7 @@ export class Lighting {
     this._enabled = enabled;
     this.ambient.visible = enabled;
     this.sunLight.visible = enabled;
+    this.fillLight.visible = enabled;
     this.moonLight.visible = enabled;
     this.skybox.setEnabled(enabled && this._skyboxEnabled);
   }
@@ -55,65 +77,125 @@ export class Lighting {
   isEnabled() {
     return this._enabled;
   }
-
   isSkyboxEnabled() {
     return this._skyboxEnabled;
   }
 
   setupMaterial(material) {
+    material.receiveShadow = true;
     return material;
   }
 
   updateDayCycle(dayTimer, delta, playerPos) {
     if (!this._enabled) return;
-    
+
     this._dayTimer = dayTimer;
-    
-    // Update skybox
+    // Skybox correctly still tracks camera (player) for distant rendering
     this.skybox.update(dayTimer, delta, playerPos);
 
-    // Simple sun position
     const angle = dayTimer * Math.PI * 2;
-    const sunHeight = Math.sin(angle) * 400 + 200;
-    const sunX = Math.cos(angle) * 600;
-    
-    this.sunLight.position.set(
-      playerPos.x + sunX,
-      playerPos.y + sunHeight,
-      playerPos.z + 200
+    const isDay = Math.sin(angle) > 0;
+
+    let centerPos = playerPos;
+    let d = 350;
+    let sunDistX = 600;
+    let sunDistY = 400;
+    let sunBaseY = 300;
+    let shadowFar = 900;
+    let shadowNear = 50;
+    let zOffset = 200;
+
+    if (CONFIG.HOI4_MODE && CONFIG.HOI4_MODE.ENABLED) {
+      // Fix lighting orientation strictly over the HOI4 map boundaries
+      centerPos = new THREE.Vector3(0, 0, 0);
+
+      d = Math.max(CONFIG.HOI4_MODE.MAP_WIDTH, CONFIG.HOI4_MODE.MAP_HEIGHT) / 2;
+      d = Math.max(d, 350);
+      d *= 1.2; // Add padding to avoid edge clipping
+
+      sunDistX = d * 1.5;
+      sunDistY = d;
+      sunBaseY = d;
+      shadowFar = d * 3; // Kept tight to save precision
+      shadowNear = 10;
+      zOffset = 0;
+    }
+
+    // --- Adjust Shadow Camera Extents Dynamically ---
+    if (this.sunLight.shadow.camera.top !== d) {
+      this.sunLight.shadow.camera.left = -d;
+      this.sunLight.shadow.camera.right = d;
+      this.sunLight.shadow.camera.top = d;
+      this.sunLight.shadow.camera.bottom = -d;
+      this.sunLight.shadow.camera.near = shadowNear;
+      this.sunLight.shadow.camera.far = shadowFar;
+      this.sunLight.shadow.camera.updateProjectionMatrix();
+
+      if (CONFIG.HOI4_MODE && CONFIG.HOI4_MODE.ENABLED) {
+        // Because Renderer is now using BasicShadowMap, there is no blur filter
+        // dragging shadow boundaries outward. This means we can drop the huge bias
+        // down to a tiny fraction, instantly solving the "Peter Panning" detachment
+        // at the base of the cliffs while still preventing acne!
+        this.sunLight.shadow.bias = -0.0005;
+        this.sunLight.shadow.normalBias = 0.0;
+      } else {
+        this.sunLight.shadow.bias = -0.0001;
+        this.sunLight.shadow.normalBias = 0.0;
+      }
+    }
+
+    // --- SUN POSITION ---
+    const sunX = Math.cos(angle) * sunDistX;
+    const sunHeight = Math.max(
+      sunBaseY * 0.5,
+      Math.sin(angle) * sunDistY + sunBaseY,
     );
-    this.sunLight.target.position.copy(playerPos);
+
+    this.sunLight.position.set(
+      centerPos.x + sunX,
+      centerPos.y + sunHeight,
+      centerPos.z + zOffset,
+    );
+    this.sunLight.target.position.copy(centerPos);
     this.sunLight.target.updateMatrixWorld();
 
-    // Simple moon position (opposite of sun)
-    const moonAngle = (dayTimer + 0.5) * Math.PI * 2;
-    const moonHeight = Math.sin(moonAngle) * 300 + 250;
-    const moonX = Math.cos(moonAngle) * 500;
-    
-    this.moonLight.position.set(
-      playerPos.x + moonX,
-      playerPos.y + moonHeight,
-      playerPos.z - 200
+    // --- FILL LIGHT ---
+    const fillHeight = Math.max(100, sunHeight * 0.5);
+    this.fillLight.position.set(
+      centerPos.x - sunX * 0.6,
+      centerPos.y + fillHeight,
+      centerPos.z - zOffset,
     );
-    this.moonLight.target.position.copy(playerPos);
+    this.fillLight.target.position.copy(centerPos);
+    this.fillLight.target.updateMatrixWorld();
+
+    // --- MOON POSITION ---
+    const moonAngle = (dayTimer + 0.5) * Math.PI * 2;
+    const moonHeight = Math.max(
+      sunBaseY * 0.5,
+      Math.sin(moonAngle) * sunDistY + sunBaseY,
+    );
+    this.moonLight.position.set(
+      centerPos.x + Math.cos(moonAngle) * sunDistX,
+      centerPos.y + moonHeight,
+      centerPos.z - zOffset,
+    );
+    this.moonLight.target.position.copy(centerPos);
     this.moonLight.target.updateMatrixWorld();
 
-    // Simple light intensity based on day/night
-    const isDay = Math.sin(angle) > 0;
-    const dayFactor = Math.max(0, Math.sin(angle));
-    
-    this.sunLight.intensity = isDay ? 0.8 : 0.0;
-    this.moonLight.intensity = !isDay ? 0.2 : 0.0;
-    this.ambient.intensity = isDay ? 0.5 : 0.1;
+    // Day/night intensities
+    this.sunLight.intensity = isDay ? 1.35 : 0.0;
+    this.fillLight.intensity = isDay ? 0.45 : 0.0;
+    this.moonLight.intensity = !isDay ? 0.35 : 0.0;
+    this.ambient.intensity = isDay ? 0.55 : 0.2;
 
-    // Simple sky color change
+    // Sky & Fog color
     if (isDay) {
-      this.scene.background.setHex(0x87ceeb); // Day sky blue
+      this.scene.background.setHex(0x87ceeb);
     } else {
-      this.scene.background.setHex(0x000033); // Night dark blue
+      this.scene.background.setHex(0x000033);
     }
-    
-    // Update fog if it exists
+
     if (this.scene.fog && this.scene.fog.color) {
       this.scene.fog.color.copy(this.scene.background);
     }
@@ -130,24 +212,23 @@ export class Lighting {
   getTimeString() {
     const hoursRaw = (this._dayTimer * 24 + 6) % 24;
     const hrs = Math.floor(hoursRaw).toString().padStart(2, "0");
-    const mins = Math.floor((hoursRaw % 1) * 60).toString().padStart(2, "0");
-    
+    const mins = Math.floor((hoursRaw % 1) * 60)
+      .toString()
+      .padStart(2, "0");
     let phase = "Night";
     if (hoursRaw > 5 && hoursRaw < 8) phase = "Dawn";
     else if (hoursRaw >= 8 && hoursRaw < 17) phase = "Day";
     else if (hoursRaw >= 17 && hoursRaw < 20) phase = "Dusk";
-    
     return { hours: hrs, minutes: mins, phase: phase, hoursRaw: hoursRaw };
   }
 
   dispose() {
-    if (this.skybox) {
-      this.skybox.dispose();
-    }
-
+    if (this.skybox) this.skybox.dispose();
     this.scene.remove(this.ambient);
     this.scene.remove(this.sunLight);
     this.scene.remove(this.sunLight.target);
+    this.scene.remove(this.fillLight);
+    this.scene.remove(this.fillLight.target);
     this.scene.remove(this.moonLight);
     this.scene.remove(this.moonLight.target);
   }

@@ -1,19 +1,97 @@
-// worker.js
 export const WORKER_SRC = `
 // ----------------------------------------------------------------------
 // SECTION 1: NOISE ENGINE & MATHEMATICAL UTILITIES
 // ----------------------------------------------------------------------
 let perm;
-let blockColors = []; // Configured from the main thread
+let blockColors = [];
 
+// --- HOI4 REAL MAP DATA ---
+let hoi4Width = 0;
+let hoi4Height = 0;
+let hoi4HeightData = null;
+let hoi4BiomeData = null;
+let hoi4ModeEnabled = false;
+let hoi4WorldOffsetX = 0;
+let hoi4WorldOffsetZ = 0;
+
+// --- ADD THESE THREE LINES BELOW ---
+let hoi4TerrainData = null;    // <--- New
+let hoi4TerrainWidth = 0;      // <--- New
+let hoi4TerrainHeight = 0;     // <--- New
+
+function getHOI4Terrain(wx, wz) {
+  if (!hoi4TerrainData || hoi4TerrainWidth === 0 || hoi4TerrainHeight === 0) return null;
+  let hx = Math.floor(wx + hoi4WorldOffsetX);
+  let hz = Math.floor(wz + hoi4WorldOffsetZ);
+  if (hx < 0 || hx >= hoi4TerrainWidth || hz < 0 || hz >= hoi4TerrainHeight) return null;
+  const idx = (hz * hoi4TerrainWidth + hx) * 4;
+  return { r: hoi4TerrainData[idx], g: hoi4TerrainData[idx + 1], b: hoi4TerrainData[idx + 2] };
+}
+
+// Match HOI4 RGB values to BLOCK_TYPES IDs (from your blockRegistry.js)
+const HOI4_COLOR_MAP = [
+  { r: 255, g: 0, b: 24, block: 1 },    // Plains -> GRASS
+  { r: 6, g: 200, b: 11, block: 1 },    // Forest -> GRASS
+  { r: 0, g: 86, b: 6, block: 1 },      // Forest 2 -> GRASS
+  { r: 206, g: 169, b: 99, block: 4 },  // Desert -> SAND
+  { r: 252, g: 255, b: 0, block: 4 },   // Desert 2 -> SAND
+  { r: 134, g: 84, b: 30, block: 3 },   // Mountain -> STONE
+  { r: 174, g: 0, b: 255, block: 3 },   // Mountain -> STONE
+  { r: 255, g: 126, b: 0, block: 3 },   // Mountain -> STONE
+  { r: 27, g: 27, b: 27, block: 3 },    // Mountain -> STONE
+  { r: 112, g: 74, b: 31, block: 2 },   // Hills -> DIRT
+  { r: 75, g: 147, b: 174, block: 19 }, // Marsh -> CLAY (or WATER/DIRT mix)
+  { r: 240, g: 255, b: 0, block: 9 },   // Urban -> COBBLESTONE
+  { r: 255, g: 0, b: 127, block: 1 },   // Jungle -> GRASS (Leaves/wood trees spawn on top)
+  { r: 0, g: 82, b: 82, block: 1 },     // Jungle 2 -> GRASS
+  { r: 8, g: 31, b: 130, block: 7 },    // Ocean -> WATER
+  { r: 55, g: 90, b: 220, block: 7 },   // Lakes -> WATER
+  { r: 255, g: 255, b: 255, block: 8 }, // Snow -> SNOW
+];
+
+function isChunkInsideHoi4Map(cx, cz, size, stride = 1) {
+  if (!hoi4ModeEnabled) return true;
+  const chunkWorldMinX = cx * size * stride;
+  const chunkWorldMinZ = cz * size * stride;
+  const chunkWorldMaxX = chunkWorldMinX + size * stride - 1;
+  const chunkWorldMaxZ = chunkWorldMinZ + size * stride - 1;
+
+  const horizontalScale = 1.2;
+  const centerOffsetX = hoi4Width / 2;
+  const centerOffsetZ = hoi4Height / 2;
+  
+  // Apply the same horizontalScale mapping as the terrain readers
+  const imgMinX = (chunkWorldMinX / horizontalScale) + centerOffsetX;
+  const imgMinZ = (chunkWorldMinZ / horizontalScale) + centerOffsetZ;
+  const imgMaxX = (chunkWorldMaxX / horizontalScale) + centerOffsetX;
+  const imgMaxZ = (chunkWorldMaxZ / horizontalScale) + centerOffsetZ;
+
+  // If the chunk is entirely outside the image, return false
+  if (imgMaxX < 0 || imgMinX >= hoi4Width || imgMaxZ < 0 || imgMinZ >= hoi4Height) {
+    return false;
+  }
+  return true;
+}
+
+function getBlockTypeFromTerrain(r, g, b) {
+  let bestBlock = 1; // Default GRASS
+  let bestDist = Infinity;
+  for (let i = 0; i < HOI4_COLOR_MAP.length; i++) {
+    const c = HOI4_COLOR_MAP[i];
+    const dr = r - c.r;
+    const dg = g - c.g;
+    const db = b - c.b;
+    const dist = dr*dr + dg*dg + db*db; // Euclidean distance
+    if (dist < bestDist) { bestDist = dist; bestBlock = c.block; }
+  }
+  return bestBlock;
+}
+  
 function initPerm(seed) {
   const p = new Uint8Array(256);
   for (let i = 0; i < 256; i++) p[i] = i;
   let rng = seed;
-  function rnd() { 
-    rng = (rng * 16807) % 2147483647; 
-    return rng / 2147483647; 
-  }
+  function rnd() { rng = (rng * 16807) % 2147483647; return rng / 2147483647; }
   for (let i = 255; i > 0; i--) {
     const j = Math.floor(rnd() * (i + 1));
     const t = p[i]; p[i] = p[j]; p[j] = t;
@@ -33,13 +111,8 @@ function hash3(x, y, z) {
   return term4 & 0x7fffffff;
 }
 
-function fade(t) { 
-  return t * t * t * (t * (t * 6 - 15) + 10); 
-}
-
-function lerp(t, a, b) { 
-  return a + t * (b - a); 
-}
+function fade(t) { return t * t * t * (t * (t * 6 - 15) + 10); }
+function lerp(t, a, b) { return a + t * (b - a); }
 
 function grad(hash, x, y, z) {
   const h = hash & 15;
@@ -98,7 +171,6 @@ function domainWarp(x, z, strength = 80, frequency = 0.001) {
   return [x + wx, z + wz];
 }
 
-// Soft-clamping curves to prevent hyper-jagged vertical spires
 function softenPeaks(h, maxH) {
   const CAP = maxH * 0.45;
   const SOFTNESS = maxH * 0.25;
@@ -107,11 +179,11 @@ function softenPeaks(h, maxH) {
   return CAP + SOFTNESS * Math.tanh(excess / SOFTNESS);
 }
 
-
 // ----------------------------------------------------------------------
 // SECTION 2: BIOME & STRATIFICATION CLASSIFICATION
 // ----------------------------------------------------------------------
 function getClimate(wx, wz) {
+  if (hoi4ModeEnabled) return { temperature: 0, moisture: 0 };
   return {
     temperature: fbm2D(wx * 0.0005, wz * 0.0005, 4, 2.0, 0.5),
     moisture: fbm2D((wx + 4000) * 0.0006, (wz - 4000) * 0.0006, 4, 2.0, 0.5)
@@ -119,14 +191,15 @@ function getClimate(wx, wz) {
 }
 
 function classifyBiome(temp, moist, elevation, maxH) {
+  if (hoi4ModeEnabled) return 3;
   const eFactor = Math.max(0, (elevation - maxH * 0.25) / (maxH * 0.3));
   temp -= eFactor * 0.45;
-  if (elevation > maxH * 0.55) return 6; // Alpine / peaks
-  if (temp < -0.15) return moist > 0.0 ? 5 : 4; // Tundra vs Desert-cold
+  if (elevation > maxH * 0.55) return 6;
+  if (temp < -0.15) return moist > 0.0 ? 5 : 4;
   if (temp > 0.15) {
-    if (moist < -0.05) return 1; // Desert-hot
-    if (moist < 0.15) return 2;  // Savannah
-    return 3;                    // Plains/Rainforest
+    if (moist < -0.05) return 1;
+    if (moist < 0.15) return 2;
+    return 3;
   }
   return moist >= -0.05 ? 3 : 0;
 }
@@ -136,83 +209,53 @@ function getSurfaceStrata(wx, wz, topY, seaLevel, biome, heightLimit) {
   const snowThreshold = heightLimit * 0.55;
   
   if (topY >= snowThreshold + noise3(wx * 0.015, 0, wz * 0.015) * 30) {
-    surfaceBlock = 8; underBlock = 3; rockBlock = 3; // Alpine snow
+    surfaceBlock = 8; underBlock = 3; rockBlock = 3;
   } else if (topY <= seaLevel && biome !== 2) {
     const beachNoise = fbm2D(wx * 0.04, wz * 0.04, 2);
-    if (beachNoise > 0.15) { 
-      surfaceBlock = 4; underBlock = 4; rockBlock = 9; 
-    } else { 
-      surfaceBlock = 15; underBlock = 15; rockBlock = 9; 
-    }
+    if (beachNoise > 0.15) { surfaceBlock = 4; underBlock = 4; rockBlock = 9; }
+    else { surfaceBlock = 15; underBlock = 15; rockBlock = 9; }
   } else {
     switch (biome) {
-      case 1: // Desert
-        surfaceBlock = (fbm2D(wx * 0.03, wz * 0.03, 2) > 0.3) ? 18 : 4;
-        underBlock = 18; rockBlock = 9; break;
-      case 2: // Savannah
-        surfaceBlock = (fbm2D(wx * 0.04, wz * 0.04, 2) > 0.5) ? 21 : 19;
-        underBlock = 19; rockBlock = 3; break;
-      case 3: // Forest
-        surfaceBlock = 1; underBlock = 2; rockBlock = 3; break;
-      case 4: // Snowy forest
-        surfaceBlock = (fbm2D(wx * 0.02, wz * 0.02, 2) > 0.2) ? 23 : 8;
-        underBlock = 8; rockBlock = 3; break;
-      case 5: // Tundra
-        surfaceBlock = 1; underBlock = 2; rockBlock = 3; break;
-      case 6: // Rock peaks
-        surfaceBlock = 3; underBlock = 3; rockBlock = 3; break;
-      default:
-        surfaceBlock = (fbm2D(wx * 0.02, wz * 0.02, 2) > 0.1 && topY > heightLimit * 0.2) ? 3 : 1;
-        underBlock = 2; rockBlock = 3;
+      case 1: surfaceBlock = (fbm2D(wx * 0.03, wz * 0.03, 2) > 0.3) ? 18 : 4; underBlock = 18; rockBlock = 9; break;
+      case 2: surfaceBlock = (fbm2D(wx * 0.04, wz * 0.04, 2) > 0.5) ? 21 : 19; underBlock = 19; rockBlock = 3; break;
+      case 3: surfaceBlock = 1; underBlock = 2; rockBlock = 3; break;
+      case 4: surfaceBlock = (fbm2D(wx * 0.02, wz * 0.02, 2) > 0.2) ? 23 : 8; underBlock = 8; rockBlock = 3; break;
+      case 5: surfaceBlock = 1; underBlock = 2; rockBlock = 3; break;
+      case 6: surfaceBlock = 3; underBlock = 3; rockBlock = 3; break;
+      default: surfaceBlock = (fbm2D(wx * 0.02, wz * 0.02, 2) > 0.1 && topY > heightLimit * 0.2) ? 3 : 1; underBlock = 2; rockBlock = 3;
     }
   }
   return { surfaceBlock, underBlock, rockBlock };
 }
 
-
 // ----------------------------------------------------------------------
 // SECTION 3: REVISED RIVER & VALLEY SDF CARVER
 // ----------------------------------------------------------------------
 function getRiverSDF(wx, wz) {
-  // Low frequency winding river curves to define continental paths
   const path1 = fbm2D(wx * 0.0003, wz * 0.0003, 4, 1.9, 0.55);
   const path2 = fbm2D((wx + 2000) * 0.0003, (wz - 2000) * 0.0003, 4, 1.9, 0.55);
-  
-  // Continental river lines exist along zero crossings
-  const riverVal = Math.abs(path1 - path2);
-  return riverVal;
+  return Math.abs(path1 - path2);
 }
 
 function applyRiverAndValleyCarving(height, wx, wz, seaLevel) {
+  if (hoi4ModeEnabled) return height;
   const riverSDF = getRiverSDF(wx, wz);
-
-  // 1. Broad Valley Carver (carves a massive smooth basin so rivers sit in natural valleys)
-  const valleyWidth = 0.08; // Normalised coordinate scale
+  const valleyWidth = 0.08;
   if (riverSDF < valleyWidth) {
     const normValley = riverSDF / valleyWidth;
-    const valleyProfile = normValley * normValley * (3.0 - 2.0 * normValley); // Smoothstep curve
-    
-    // Slopes the entire landscape down into a gentle river basin
+    const valleyProfile = normValley * normValley * (3.0 - 2.0 * normValley);
     const targetValleyHeight = seaLevel + 12.0;
-    if (height > targetValleyHeight) {
-      height = lerp(valleyProfile, targetValleyHeight, height);
-    }
+    if (height > targetValleyHeight) height = lerp(valleyProfile, targetValleyHeight, height);
   }
-
-  // 2. Local River Bed Carver (carves the flat flat water channel within the valley)
   const streamWidth = 0.012; 
   if (riverSDF < streamWidth) {
     const normBed = riverSDF / streamWidth;
     const bedProfile = normBed * normBed * (3.0 - 2.0 * normBed);
-    
-    // Flat riverbed profile sits naturally below sea level
     const targetBedHeight = seaLevel - 5.0;
     height = lerp(bedProfile, targetBedHeight, height);
   }
-
   return height;
 }
-
 
 // ----------------------------------------------------------------------
 // SECTION 4: HEIGHTMAP & CONTINENTAL MOUNTAIN GENERATOR
@@ -234,10 +277,85 @@ function continentShape(cont) {
   return 0.76 + (t - 0.4) * (0.24 / 0.6);
 }
 
+function getHOI4Terrain(wx, wz) {
+  if (!hoi4TerrainData || hoi4TerrainWidth === 0 || hoi4TerrainHeight === 0) return null;
+  
+  const horizontalScale = 1.2;
+  const centerOffsetX = hoi4TerrainWidth / 2;
+  const centerOffsetZ = hoi4TerrainHeight / 2;
+  
+  let hx = Math.floor((wx / horizontalScale) + centerOffsetX);
+  let hz = Math.floor((wz / horizontalScale) + centerOffsetZ);
+  
+  if (hx < 0 || hx >= hoi4TerrainWidth || hz < 0 || hz >= hoi4TerrainHeight) return null;
+  
+  const idx = (hz * hoi4TerrainWidth + hx) * 4;
+  return { r: hoi4TerrainData[idx], g: hoi4TerrainData[idx + 1], b: hoi4TerrainData[idx + 2] };
+}
+
+function getHOI4Biome(wx, wz) {
+  if (!hoi4BiomeData || hoi4BiomeData.length === 0 || hoi4Width === 0 || hoi4Height === 0) return -1;
+
+  const horizontalScale = 1.2;
+  const centerOffsetX = hoi4Width / 2;
+  const centerOffsetZ = hoi4Height / 2;
+  let hx = Math.floor((wx / horizontalScale) + centerOffsetX);
+  let hz = Math.floor((wz / horizontalScale) + centerOffsetZ);
+
+  if (hx < 0 || hx >= hoi4Width || hz < 0 || hz >= hoi4Height) {
+    return -1;
+  }
+
+  return hoi4BiomeData[hz * hoi4Width + hx];
+}
+
+// Inside worker.js - Replace calculateBaseHeight with this fixed version
 function calculateBaseHeight(wx, wz, maxH, seaLevel, terrainParams = {}) {
+  // --- HOI4 HEIGHTMAP OVERRIDE ---
+  if (typeof hoi4ModeEnabled !== 'undefined' && hoi4ModeEnabled) {
+    const mapWidth = hoi4Width;
+    const mapHeight = hoi4Height;
+    const centerOffsetX = mapWidth / 2;
+    const centerOffsetZ = mapHeight / 2;
+
+    const horizontalScale = 1.2; 
+    const verticalScale = 1.5; 
+
+    // Map world coords to image coords, applying the horizontal stretch
+    let hx = Math.floor((wx / horizontalScale) + centerOffsetX);
+    let hz = Math.floor((wz / horizontalScale) + centerOffsetZ);
+
+    // Soft Edge Clamping
+    if (hx < 0 || hx >= mapWidth || hz < 0 || hz >= mapHeight) {
+      return 0; 
+    }
+
+    // Read the pixel
+    const rawHeight = hoi4HeightData[hz * mapWidth + hx];
+
+    // If out of bounds, return 0 (sea)
+    if (rawHeight === undefined || rawHeight < 0) return 0;
+
+    // Terrain Stretching
+    if (rawHeight <= 94) {
+      // Ocean floor
+      const oceanDepthFactor = (94 - rawHeight) / 94;
+      return Math.max(-15, seaLevel - (oceanDepthFactor * seaLevel * 0.8));
+    } else {
+      // Land
+      const landHeight = rawHeight - 94;
+      const maxLand = 255 - 94; // 161
+      const availableHeight = maxH - seaLevel;
+      
+      const mountainHeight = (landHeight / maxLand) * (availableHeight * 0.5);
+      
+      return Math.floor(seaLevel + (mountainHeight * verticalScale));
+    }
+  }
+
+  // --- PROCEDURAL GENERATION FALLBACK ---
   const domainWarpStrength = terrainParams.domainWarpStrength || 120;
   const domainWarpFreq = terrainParams.domainWarpFreq || 0.0015;
-  
   let [wwx, wwz] = domainWarp(wx, wz, domainWarpStrength, domainWarpFreq);
   
   const cont = getContinentalness(wwx, wwz);
@@ -245,18 +363,19 @@ function calculateBaseHeight(wx, wz, maxH, seaLevel, terrainParams = {}) {
   
   let height;
   const coastThreshold = 0.18;
+  
   if (landFactor < coastThreshold) {
     height = 15 + (landFactor / coastThreshold) * (seaLevel - 15);
   } else {
     const landBase = landFactor - coastThreshold;
-    const mountainScale = terrainParams.mountainScale || 0.22; // Gently scaled to reduce columns
+    const mountainScale = terrainParams.mountainScale || 0.22;
     const baseMtnScale = maxH * mountainScale;
     height = seaLevel + landBase * baseMtnScale;
   }
   
-  // Low frequency terrace plateau pass
   const plateauNoise = fbm2D(wwx * 0.001, wwz * 0.001, 3);
   let plateauMask = Math.max(0, Math.min(1, (plateauNoise - 0.4) * 3.5));
+  
   if (plateauMask > 0 && landFactor > 0.3) {
     const stepH = 45;
     const terraced = Math.floor(height / stepH) * stepH;
@@ -265,31 +384,26 @@ function calculateBaseHeight(wx, wz, maxH, seaLevel, terrainParams = {}) {
     height = height * (1 - plateauMask) + smoothTerrace * plateauMask;
   }
 
-  // Softened peaks with reduced peak multiplier to eliminate jagged needle structures
-  const noiseFreq = terrainParams.noiseFreq || 0.0015; // Smooth out high-frequency peaks
+  const noiseFreq = terrainParams.noiseFreq || 0.0015;
   const ridge = ridgedFbm2D(wwx * noiseFreq, wwz * noiseFreq, 5, 2.0, 0.45);
   const mtnMask = Math.max(0, (landFactor - 0.35) / 0.65); 
   const peakScale = maxH * (terrainParams.peakScale || 0.28); 
-  height += Math.pow(ridge, 1.5) * peakScale * Math.pow(mtnMask, 1.4);
   
-  // Rolling hillside noise passes
+  height += Math.pow(ridge, 1.5) * peakScale * Math.pow(mtnMask, 1.4);
   height += fbm2D(wwx * (noiseFreq * 4.0), wwz * (noiseFreq * 4.0), 4, 2.0, 0.45) * 25 * (0.3 + landFactor * 0.7);
-
-  // Apply Revised Valley and River bed carving directly to heightmap pass
+  
   height = applyRiverAndValleyCarving(height, wx, wz, seaLevel);
-
+  
   return height;
 }
-
-
+  
 // ----------------------------------------------------------------------
 // SECTION 5: FAST HYDRAULIC EROSION
 // ----------------------------------------------------------------------
-function randFromCoords(x, y, z) {
-  return hash3(x, y, z) / 0x7fffffff;
-}
+function randFromCoords(x, y, z) { return hash3(x, y, z) / 0x7fffffff; }
 
 function erodeHeightmap(hm, width, originX, originZ, stride) {
+  if (hoi4ModeEnabled) return hm;
   const getH = (x, z) => (x < 0 || x >= width || z < 0 || z >= width) ? 0 : hm[z * width + x];
   const setH = (x, z, v) => { if (x >= 0 && x < width && z >= 0 && z < width) hm[z * width + x] = v; };
   const getGrad = (x, z) => {
@@ -345,41 +459,30 @@ function erodeHeightmap(hm, width, originX, originZ, stride) {
   return hm;
 }
 
-
 // ----------------------------------------------------------------------
-// SECTION 6: ORGANIC DENSITY FIELD & 3D OVERHANGS (NO COLUMNS)
+// SECTION 6: ORGANIC DENSITY FIELD & 3D OVERHANGS
 // ----------------------------------------------------------------------
 let outBlockType = 255;
 function getTerrainDensity(wx, wy, wz, seaLevel, baseHeight) {
+  if (hoi4ModeEnabled) {
+    return wy < baseHeight ? 1 : 0;
+  }
   outBlockType = 255;
-  
-  // Continuous 3D interpolation to break vertical voxel blocks
   const depth = baseHeight - wy;
-  
-  // Vertical density gradient
   let density = depth;
-
-  // Multi-scale 3D FBM perturbation (replaces columns with organic shelves and overhangs)
   const perturb = fbm3D(wx * 0.015, wy * 0.018, wz * 0.015, 3, 2.0, 0.55);
-  
-  // Modulates noise scale slightly around the surface to keep soil terrain smooth
   const noiseAmt = 12.0 * (1.0 - Math.min(1.0, Math.max(0, -depth) / 20.0));
   density += perturb * noiseAmt;
 
-  // Underground cave/cavern carvers
   if (depth > 6) {
     const caveLarge = fbm3D(wx * 0.015, wy * 0.015, wz * 0.015, 3, 2.2, 0.5);
     const caveSmall = fbm3D(wx * 0.038, wy * 0.038, wz * 0.038, 3, 2.0, 0.5);
     const cavern = fbm3D(wx * 0.02, wy * 0.025, wz * 0.02, 4, 2.1, 0.5);
     const tunnel = fbm3D(wx * 0.035, wy * 0.02, wz * 0.035, 3, 2.0, 0.5);
-    
     const caveMultiplier = Math.min(1.0, (depth - 6) / 12.0);
-    
     density -= Math.max(0, caveLarge * 0.4 + caveSmall * 0.2 - 0.1) * 0.45 * caveMultiplier;
     density -= Math.max(0, cavern - 0.36) * 1.35 * caveMultiplier;
     if (Math.abs(tunnel) < 0.035 && depth > 10) density -= 1.15 * caveMultiplier;
-    
-    // Obsidian deposits near deep magma zones
     if (wy < 80 && wy > 15) {
       if (fbm3D(wx * 0.08, wy * 0.08, wz * 0.08, 2, 2.0, 0.5) > 0.42 && caveLarge < -0.15) {
         density = 1.6; outBlockType = 11;
@@ -387,21 +490,18 @@ function getTerrainDensity(wx, wy, wz, seaLevel, baseHeight) {
     }
   }
 
-  // Under-layer mineral ore patches
   if (wy < baseHeight - 8 && wy > 0) {
     const oreNoise = fbm3D(wx * 0.045, wy * 0.045, wz * 0.045, 2, 2.0, 0.5);
     if (density > 0 && oreNoise > 0.58) {
-      if (wy < 18) outBlockType = 10;      // Glowstone deep
-      else if (wy < 45) outBlockType = 11; // Obsidian core
-      else if (wy < 90) outBlockType = 20; // Brick seams
-      else if (wy < 150) outBlockType = 17;// Coal seams
-      else outBlockType = 9;               // Cobble pockets
+      if (wy < 18) outBlockType = 10;
+      else if (wy < 45) outBlockType = 11;
+      else if (wy < 90) outBlockType = 20;
+      else if (wy < 150) outBlockType = 17;
+      else outBlockType = 9;
     }
   }
-
   return density;
 }
-
 
 // ----------------------------------------------------------------------
 // SECTION 7: CHUNK DATA BLOCK GENERATORS
@@ -417,16 +517,37 @@ function getErodedHeightmap(cx, cz, size, stride, padding, heightLimit, seaLevel
       hm[z * width + x] = softenPeaks(height, heightLimit);
     }
   }
-  const eroded = erodeHeightmap(hm, width, bx, bz, stride);
-  return eroded;
+  return erodeHeightmap(hm, width, bx, bz, stride);
 }
-
 function generateFullChunk(cx, cz, size, heightLimit, seaLevel) {
+  // --- EARLY OUT: if chunk is completely outside HOI4 map, return water-only blocks ---
+  if (!isChunkInsideHoi4Map(cx, cz, size, 1)) {
+    const blocks = new Uint8Array(size * heightLimit * size);
+    for (let wy = 0; wy <= seaLevel; wy++) {
+      for (let i = 0; i < size * size; i++) {
+        blocks[wy * size * size + i] = 7; // water
+      }
+    }
+    return blocks;
+  }
+
   const padding = 16;
   const blocks = new Uint8Array(size * heightLimit * size);
   const bx = cx * size, bz = cz * size;
   const hmWidth = size + padding * 2;
-  const hm = getErodedHeightmap(cx, cz, size, 1, padding, heightLimit, seaLevel);
+  let hm;
+
+  if (hoi4ModeEnabled) {
+    hm = new Float32Array(hmWidth * hmWidth);
+    for (let z = 0; z < hmWidth; z++) {
+      for (let x = 0; x < hmWidth; x++) {
+        const wx = bx + (x - padding), wz = bz + (z - padding);
+        hm[z * hmWidth + x] = calculateBaseHeight(wx, wz, heightLimit, seaLevel);
+      }
+    }
+  } else {
+    hm = getErodedHeightmap(cx, cz, size, 1, padding, heightLimit, seaLevel);
+  }
   
   for (let lz = 0; lz < size; lz++) {
     for (let lx = 0; lx < size; lx++) {
@@ -438,12 +559,11 @@ function generateFullChunk(cx, cz, size, heightLimit, seaLevel) {
         const wx = bx + lx, wy = ly, wz = bz + lz;
         const density = getTerrainDensity(wx, wy, wz, seaLevel, baseHeight);
         const idx = (ly * size + lz) * size + lx;
-        blocks[idx] = density > 0 ? ((outBlockType !== 255) ? outBlockType : 3) : 0;
+        blocks[idx] = density > 0 ? 3 : 0;
       }
     }
   }
   
-  // Seal water boundaries for valleys
   for (let ly = 0; ly <= seaLevel; ly++) {
     for (let i = 0; i < size * size; i++) {
       const idx = ly * size * size + i;
@@ -451,17 +571,43 @@ function generateFullChunk(cx, cz, size, heightLimit, seaLevel) {
     }
   }
 
-  // Seal flat riverbeds directly to fluid blocks
-  for (let lz = 0; lz < size; lz++) {
-    for (let lx = 0; lx < size; lx++) {
-      const wx = bx + lx, wz = bz + lz;
-      const rSDF = getRiverSDF(wx, wz);
-      if (rSDF < 0.012) {
-        const topWaterY = seaLevel;
-        const bedY = Math.floor(hm[(lz + padding) * hmWidth + (lx + padding)]);
-        for (let wy = bedY + 1; wy <= topWaterY; wy++) {
-          const idx = (wy * size + lz) * size + lx;
-          if (blocks[idx] === 0) blocks[idx] = 7;
+  if (hoi4ModeEnabled) {
+    // Surface painting for HOI4 mode using the terrain texture
+    for (let lz = 0; lz < size; lz++) {
+      for (let lx = 0; lx < size; lx++) {
+        let top = -1;
+        for (let ly = heightLimit - 1; ly >= 0; ly--) {
+          const idx = (ly * size + lz) * size + lx;
+          if (blocks[idx] !== 0 && blocks[idx] !== 7) { top = ly; break; }
+        }
+        if (top >= 0) {
+          const wx = bx + lx, wz = bz + lz;
+          // Get the pixel color from the terrain.png
+          const terrainColor = getHOI4Terrain(wx, wz);
+          let surfaceBlock = 1; // default grass
+          if (terrainColor) {
+            surfaceBlock = getBlockTypeFromTerrain(terrainColor.r, terrainColor.g, terrainColor.b);
+          }
+
+          // Do NOT place water blocks on land (water blocks are handled by sea level)
+          if (surfaceBlock === 7) continue; 
+
+          // Place the surface block
+          blocks[(top * size + lz) * size + lx] = surfaceBlock;
+          
+          // Place Strata below surface
+          if (surfaceBlock === 3) { // Stone/Mountain
+            if (top - 1 >= 0) blocks[((top - 1) * size + lz) * size + lx] = 3;
+            if (top - 2 >= 0) blocks[((top - 2) * size + lz) * size + lx] = 3;
+          } else if (surfaceBlock === 1) { // Grass
+            if (top - 1 >= 0) blocks[((top - 1) * size + lz) * size + lx] = 1;
+            if (top - 2 >= 0) blocks[((top - 2) * size + lz) * size + lx] = 2; // Dirt under grass
+          } else if (surfaceBlock === 4) { // Sand
+            if (top - 1 >= 0) blocks[((top - 1) * size + lz) * size + lx] = 4;
+            if (top - 2 >= 0) blocks[((top - 2) * size + lz) * size + lx] = 4;
+          } else {
+            if (top - 1 >= 0) blocks[((top - 1) * size + lz) * size + lx] = surfaceBlock;
+          }
         }
       }
     }
@@ -471,23 +617,54 @@ function generateFullChunk(cx, cz, size, heightLimit, seaLevel) {
   for (let lz = 0; lz < size; lz++) {
     for (let lx = 0; lx < size; lx++) {
       const wx = bx + lx, wz = bz + lz;
-      const { temperature, moisture } = getClimate(wx, wz);
-      biomeMap[lz * size + lx] = classifyBiome(temperature, moisture, hm[(lz + padding) * hmWidth + (lx + padding)], heightLimit);
+      if (hoi4ModeEnabled) {
+        const hoi4Biome = getHOI4Biome(wx, wz);
+        biomeMap[lz * size + lx] = hoi4Biome >= 0 ? hoi4Biome : 3;
+      } else {
+        const { temperature, moisture } = getClimate(wx, wz);
+        biomeMap[lz * size + lx] = classifyBiome(temperature, moisture, hm[(lz + padding) * hmWidth + (lx + padding)], heightLimit);
+      }
     }
   }
-  paintSurface(blocks, biomeMap, cx, cz, size, heightLimit, seaLevel);
-  paintFlora(blocks, biomeMap, bx, bz, size, heightLimit, seaLevel);
+
+  if (!hoi4ModeEnabled) {
+    paintSurface(blocks, biomeMap, cx, cz, size, heightLimit, seaLevel);
+    paintFlora(blocks, biomeMap, bx, bz, size, heightLimit, seaLevel);
+  }
+
   return blocks;
 }
 
 function generateLODBlockArray(cx, cz, stride, size, heightLimit, seaLevel) {
+  // --- EARLY OUT: if chunk is completely outside HOI4 map, return water-only blocks ---
+  if (!isChunkInsideHoi4Map(cx, cz, size, stride)) {
+    const blocks = new Uint8Array(size * heightLimit * size);
+    for (let wy = 0; wy <= seaLevel; wy++) {
+      for (let i = 0; i < size * size; i++) {
+        blocks[wy * size * size + i] = 7; // water
+      }
+    }
+    return blocks;
+  }
+
   const padding = 16;
   const blocks = new Uint8Array(size * heightLimit * size);
   const bx = cx * size * stride, bz = cz * size * stride;
   const span = size * stride;
   const hmWidth = size + padding * 2;
-  
-  const hm = getErodedHeightmap(cx, cz, size, stride, padding, heightLimit, seaLevel);
+  let hm;
+
+  if (hoi4ModeEnabled) {
+    hm = new Float32Array(hmWidth * hmWidth);
+    for (let z = 0; z < hmWidth; z++) {
+      for (let x = 0; x < hmWidth; x++) {
+        const wx = bx + (x - padding) * stride, wz = bz + (z - padding) * stride;
+        hm[z * hmWidth + x] = calculateBaseHeight(wx, wz, heightLimit, seaLevel);
+      }
+    }
+  } else {
+    hm = getErodedHeightmap(cx, cz, size, stride, padding, heightLimit, seaLevel);
+  }
   
   for (let lz = 0; lz < span; lz += stride) {
     const lodZ = lz / stride;
@@ -495,39 +672,13 @@ function generateLODBlockArray(cx, cz, stride, size, heightLimit, seaLevel) {
       const lodX = lx / stride;
       const wx = bx + lx, wz = bz + lz;
       const baseHeight = hm[(lodZ + padding) * hmWidth + (lodX + padding)];
-
       const minY = Math.max(0, Math.floor(baseHeight - 140));
       const maxY = Math.min(heightLimit - 1, Math.ceil(baseHeight + 80));
-
-      let hitSurface = false;
-      let topWy = -1;
-      let strata = null;
-
+      
       for (let wy = maxY; wy >= minY; wy--) {
         const density = getTerrainDensity(wx, wy, wz, seaLevel, baseHeight);
         const idx = (wy * size + lodZ) * size + lodX;
-        if (density > 0) {
-          if (!hitSurface) {
-            const { temperature, moisture } = getClimate(wx, wz);
-            const biome = classifyBiome(temperature, moisture, baseHeight, heightLimit);
-            strata = getSurfaceStrata(wx, wz, wy, seaLevel, biome, heightLimit);
-
-            blocks[idx] = strata.surfaceBlock;
-            if (wy - 1 >= minY) blocks[((wy - 1) * size + lodZ) * size + lodX] = strata.surfaceBlock;
-            if (wy - 2 >= minY) blocks[((wy - 2) * size + lodZ) * size + lodX] = strata.underBlock;
-            if (wy - 3 >= minY) blocks[((wy - 3) * size + lodZ) * size + lodX] = strata.underBlock;
-
-            hitSurface = true;
-            topWy = wy;
-          } else {
-            if (wy <= topWy - 4) {
-              if (wy < 50 + noise3(wx, wy, wz) * 16) blocks[idx] = 9;
-              else blocks[idx] = strata.rockBlock;
-            }
-          }
-        } else {
-          blocks[idx] = wy <= seaLevel ? 7 : 0;
-        }
+        blocks[idx] = density > 0 ? 3 : 0;
       }
     }
   }
@@ -543,18 +694,43 @@ function generateLODBlockArray(cx, cz, stride, size, heightLimit, seaLevel) {
     }
   }
 
-  for (let lz = 0; lz < span; lz += stride) {
-    const lodZ = lz / stride;
-    for (let lx = 0; lx < span; lx += stride) {
-      const lodX = lx / stride;
-      const wx = bx + lx, wz = bz + lz;
-      const rSDF = getRiverSDF(wx, wz);
-      if (rSDF < 0.012) {
-        const topWaterY = seaLevel;
-        const bedY = Math.floor(hm[(lodZ + padding) * hmWidth + (lodX + padding)]);
-        for (let wy = bedY + 1; wy <= topWaterY; wy++) {
-          const idx = (wy * size + lodZ) * size + lodX;
-          if (blocks[idx] === 0) blocks[idx] = 7;
+  if (hoi4ModeEnabled) {
+    // Surface painting for HOI4 mode using the terrain texture
+    for (let lz = 0; lz < size; lz++) {
+      for (let lx = 0; lx < size; lx++) {
+        let top = -1;
+        for (let ly = heightLimit - 1; ly >= 0; ly--) {
+          const idx = (ly * size + lz) * size + lx;
+          if (blocks[idx] !== 0 && blocks[idx] !== 7) { top = ly; break; }
+        }
+        if (top >= 0) {
+          const wx = bx + lx, wz = bz + lz;
+          // Get the pixel color from the terrain.png
+          const terrainColor = getHOI4Terrain(wx, wz);
+          let surfaceBlock = 1; // default grass
+          if (terrainColor) {
+            surfaceBlock = getBlockTypeFromTerrain(terrainColor.r, terrainColor.g, terrainColor.b);
+          }
+
+          // Do NOT place water blocks on land (water blocks are handled by sea level)
+          if (surfaceBlock === 7) continue; 
+
+          // Place the surface block
+          blocks[(top * size + lz) * size + lx] = surfaceBlock;
+          
+          // Place Strata below surface
+          if (surfaceBlock === 3) { // Stone/Mountain
+            if (top - 1 >= 0) blocks[((top - 1) * size + lz) * size + lx] = 3;
+            if (top - 2 >= 0) blocks[((top - 2) * size + lz) * size + lx] = 3;
+          } else if (surfaceBlock === 1) { // Grass
+            if (top - 1 >= 0) blocks[((top - 1) * size + lz) * size + lx] = 1;
+            if (top - 2 >= 0) blocks[((top - 2) * size + lz) * size + lx] = 2; // Dirt under grass
+          } else if (surfaceBlock === 4) { // Sand
+            if (top - 1 >= 0) blocks[((top - 1) * size + lz) * size + lx] = 4;
+            if (top - 2 >= 0) blocks[((top - 2) * size + lz) * size + lx] = 4;
+          } else {
+            if (top - 1 >= 0) blocks[((top - 1) * size + lz) * size + lx] = surfaceBlock;
+          }
         }
       }
     }
@@ -562,7 +738,7 @@ function generateLODBlockArray(cx, cz, stride, size, heightLimit, seaLevel) {
 
   return blocks;
 }
-
+  
 function paintSurface(blocks, biomeMap, cx, cz, size, heightLimit, seaLevel) {
   const bx = cx * size, bz = cz * size;
   for (let lz = 0; lz < size; lz++) {
@@ -575,21 +751,17 @@ function paintSurface(blocks, biomeMap, cx, cz, size, heightLimit, seaLevel) {
         if (blocks[idx] !== 0 && blocks[idx] !== 7) { top = ly; break; }
       }
       if (top < 0) continue;
-
       const strata = getSurfaceStrata(wx, wz, top, seaLevel, biome, heightLimit);
-
       const rockNoise = fbm2D(wx * 0.008, wz * 0.008, 2);
       if (rockNoise > 0.62 && strata.surfaceBlock !== 7 && strata.surfaceBlock !== 0) {
         blocks[(top * size + lz) * size + lx] = 9;
         if (top - 1 >= 0) blocks[((top - 1) * size + lz) * size + lx] = 9;
         continue;
       }
-
       blocks[(top * size + lz) * size + lx] = strata.surfaceBlock;
       if (top - 1 >= 0) blocks[((top - 1) * size + lz) * size + lx] = strata.surfaceBlock;
       if (top - 2 >= 0) blocks[((top - 2) * size + lz) * size + lx] = strata.underBlock;
       if (top - 3 >= 0) blocks[((top - 3) * size + lz) * size + lx] = strata.underBlock;
-
       for (let ly = top - 4; ly >= 0; ly--) {
         const idxBelow = (ly * size + lz) * size + lx;
         if (blocks[idxBelow] === 0 || blocks[idxBelow] === 7) break;
@@ -635,21 +807,14 @@ function paintFlora(blocks, biomeMap, bx, bz, size, heightLimit, seaLevel) {
         const t = blocks[(ly * size + lz) * size + lx];
         if (t === 1 || t === 2) { top = ly; break; }
       }
-      
       if (top < seaLevel + 4) continue;
-
       const rand = hash3(wx, 0, wz) % 1000;
-      
       const topBlockIdx = (top * size + lz) * size + lx;
       if (blocks[topBlockIdx] === 1) {
         const grassRand = randFromCoords(wx, 0, wz);
-        if (grassRand > 0.8) {
-          blocks[((top + 1) * size + lz) * size + lx] = 23;
-        } else if (grassRand > 0.9) {
-          blocks[((top + 1) * size + lz) * size + lx] = 24;
-        }
+        if (grassRand > 0.8) blocks[((top + 1) * size + lz) * size + lx] = 23;
+        else if (grassRand > 0.9) blocks[((top + 1) * size + lz) * size + lx] = 24;
       }
-
       if (biome === 3 || biome === 5 || biome === 0) {
         const chance = (biome === 3) ? 970 : (biome === 5 ? 985 : 995);
         if (rand > chance) {
@@ -657,7 +822,6 @@ function paintFlora(blocks, biomeMap, bx, bz, size, heightLimit, seaLevel) {
           placeTemplate(blocks, size, heightLimit, lx, lz, top, TREE_TEMPLATES[templateIdx]);
         }
       }
-      
       if (fbm2D(wx * 0.005, wz * 0.005, 2) > 0.6 && rand === 0) {
         const trunkH = 6 + (hash3(wx, 3, wz) % 4);
         for (let i = 1; i <= trunkH; i++) {
@@ -685,13 +849,12 @@ function paintFlora(blocks, biomeMap, bx, bz, size, heightLimit, seaLevel) {
 // SECTION 8: GREEDY MESHER
 // ----------------------------------------------------------------------
 function blockColor(type) {
-  if (type >= 0 && type < blockColors.length) {
-    return blockColors[type];
-  }
+  if (type >= 0 && type < blockColors.length) return blockColors[type];
   return [1.0, 0.0, 1.0];
 }
 
-function buildMeshFromBlocks(blocks, originX, originZ, scaleXZ, size, heightLimit, seaLevel) {
+function buildMeshFromBlocks(blocks, originX, originZ, scaleXZ, blockWidth, blockDepth, heightLimit, seaLevel) {
+  // Check if all blocks are air (skip if all zero)
   let isEmpty = true;
   for (let i = 0; i < blocks.length; i++) {
     if (blocks[i] !== 0) {
@@ -702,58 +865,82 @@ function buildMeshFromBlocks(blocks, originX, originZ, scaleXZ, size, heightLimi
   if (isEmpty) return null;
 
   function blockAt(x, y, z) {
-    if (x >= 0 && x < size && y >= 0 && y < heightLimit && z >= 0 && z < size) {
-      return blocks[(y * size + z) * size + x];
+    if (x >= 0 && x < blockWidth && y >= 0 && y < heightLimit && z >= 0 && z < blockDepth) {
+      return blocks[(y * blockDepth + z) * blockWidth + x];
     }
     return y <= seaLevel ? 7 : 0;
   }
 
-  const positions = [], colors = [], indices = [];
-  const dims = [size, heightLimit, size];
+  const positions = [];
+  const colors = [];
+  const indices = [];
+  const dims = [blockWidth, heightLimit, blockDepth];
+
   for (let d = 0; d < 3; d++) {
-    const u = (d + 1) % 3, v = (d + 2) % 3;
-    const x = [0, 0, 0], q = [0, 0, 0];
+    const u = (d + 1) % 3;
+    const v = (d + 2) % 3;
+    const x = [0, 0, 0];
+    const q = [0, 0, 0];
     q[d] = 1;
     const mask = new Int32Array(dims[u] * dims[v]);
+
     for (x[d] = -1; x[d] < dims[d];) {
       let n = 0;
       for (x[v] = 0; x[v] < dims[v]; x[v]++) {
         for (x[u] = 0; x[u] < dims[u]; x[u]++) {
           const a = blockAt(x[0], x[1], x[2]);
           const b = blockAt(x[0] + q[0], x[1] + q[1], x[2] + q[2]);
-          const aSolid = a !== 0, bSolid = b !== 0;
-          if (aSolid === bSolid) mask[n++] = 0;
-          else if (aSolid) mask[n++] = a;
-          else mask[n++] = -b;
+          const aSolid = a !== 0;
+          const bSolid = b !== 0;
+          if (aSolid === bSolid) {
+            mask[n++] = 0;
+          } else if (aSolid) {
+            mask[n++] = a;
+          } else {
+            mask[n++] = -b;
+          }
         }
       }
-      x[d]++; n = 0;
+      x[d]++;
+      n = 0;
       for (let j = 0; j < dims[v]; j++) {
         for (let i = 0; i < dims[u];) {
           const c = mask[n];
           if (c !== 0) {
             let w = 1;
             while (i + w < dims[u] && mask[n + w] === c) w++;
-            let h = 1, done = false;
+            let h = 1;
+            let done = false;
             while (j + h < dims[v]) {
               for (let k = 0; k < w; k++) {
-                if (mask[n + k + h * dims[u]] !== c) { done = true; break; }
+                if (mask[n + k + h * dims[u]] !== c) {
+                  done = true;
+                  break;
+                }
               }
               if (done) break;
               h++;
             }
-            x[u] = i; x[v] = j;
-            const du = [0, 0, 0]; du[u] = w;
-            const dv = [0, 0, 0]; dv[v] = h;
+            x[u] = i;
+            x[v] = j;
+            const du = [0, 0, 0];
+            du[u] = w;
+            const dv = [0, 0, 0];
+            dv[v] = h;
             const blockType = Math.abs(c);
             const col = blockColor(blockType);
+
+            let nx = 0, ny = 0, nz = 0;
+            if (d === 0) nx = c > 0 ? 1 : -1;
+            else if (d === 1) ny = c > 0 ? 1 : -1;
+            else nz = c > 0 ? 1 : -1;
+
             const vary = 1.0;
+            let slopeShade = 1.0;
+            if (d === 1) slopeShade = c > 0 ? 1.0 : 0.75;
+            else slopeShade = 0.9;
 
-            let slopeShade = 0.85; 
-            if (d === 1) slopeShade = c > 0 ? 1.0 : 0.6;
-            else if (d === 0) slopeShade = 0.75;
-            else slopeShade = 0.8;
-
+            // ***** FIX: keep colors in 0–1 range (DO NOT multiply by 255) *****
             const fColR = col[0] * vary * slopeShade;
             const fColG = col[1] * vary * slopeShade;
             const fColB = col[2] * vary * slopeShade;
@@ -777,25 +964,65 @@ function buildMeshFromBlocks(blocks, originX, originZ, scaleXZ, size, heightLimi
               colors.push(fColR, fColG, fColB);
             });
             indices.push(baseIdx, baseIdx + 1, baseIdx + 2, baseIdx, baseIdx + 2, baseIdx + 3);
-            for (let l = 0; l < h; l++) for (let k = 0; k < w; k++) mask[n + k + l * dims[u]] = 0;
-            i += w; n += w;
-          } else { i++; n++; }
+
+            for (let l = 0; l < h; l++) {
+              for (let k = 0; k < w; k++) {
+                mask[n + k + l * dims[u]] = 0;
+              }
+            }
+            i += w;
+            n += w;
+          } else {
+            i++;
+            n++;
+          }
         }
       }
     }
   }
+
   if (positions.length === 0) return null;
+
   return {
     positions: new Float32Array(positions),
-    colors: new Float32Array(colors), indices: new Uint16Array(indices), indexCount: indices.length
+    colors: new Float32Array(colors),
+    indices: new Uint16Array(indices),
+    indexCount: indices.length
   };
 }
-
+  
 // ----------------------------------------------------------------------
 // SECTION 9: THREAD MESSAGE HANDLER
 // ----------------------------------------------------------------------
 self.onmessage = function(e) {
-  const m = e.data;
+  const m = e.data;  
+  
+  if (m.type === 'set_hoi4_map') {
+    hoi4Width = m.width;
+    hoi4Height = m.height;
+    hoi4HeightData = new Uint8Array(m.heightData);
+    hoi4BiomeData = m.biomeData ? new Uint8Array(m.biomeData) : null;
+    hoi4ModeEnabled = true;
+    hoi4WorldOffsetX = m.offsetX || 0;
+    hoi4WorldOffsetZ = m.offsetZ || 0;
+    
+    // --- ADD THIS BLOCK TO READ THE TERRAIN DATA ---
+    if (m.terrainData) {
+      hoi4TerrainData = new Uint8Array(m.terrainData);
+      hoi4TerrainWidth = m.terrainWidth || m.width;
+      hoi4TerrainHeight = m.terrainHeight || m.height;
+    } else {
+      // Prevent errors if terrain data is missing
+      hoi4TerrainData = null;
+      hoi4TerrainWidth = 0;
+      hoi4TerrainHeight = 0;
+    }
+    // ---------------------------------------------
+
+    console.log('Worker received HOI4 map: ' + hoi4Width + 'x' + hoi4Height + ' with offset (' + hoi4WorldOffsetX + ', ' + hoi4WorldOffsetZ + ')');
+    return;
+  }
+
   if (m.type === 'init') {
     initPerm(m.seed);
     blockColors = m.blockColors || [];
@@ -804,22 +1031,51 @@ self.onmessage = function(e) {
   
   if (m.type === 'full') {
     const b = generateFullChunk(m.cx, m.cz, m.size, m.height, m.seaLevel);
-    const geo = buildMeshFromBlocks(b, m.cx * m.size, m.cz * m.size, 1, m.size, m.height, m.seaLevel);
+    // For full chunk, blockWidth and blockDepth are both m.size
+    const geo = buildMeshFromBlocks(b, m.cx * m.size, m.cz * m.size, 1, m.size, m.size, m.height, m.seaLevel);
     const transferList = [b.buffer];
     if (geo) transferList.push(geo.positions.buffer, geo.colors.buffer, geo.indices.buffer);
-    self.postMessage({ type: 'full', id: m.id, generation: m.generation, cx: m.cx, cz: m.cz, blocks: b.buffer, geometry: geo }, transferList);
+    self.postMessage({
+      type: 'full',
+      id: m.id,
+      generation: m.generation,
+      cx: m.cx,
+      cz: m.cz,
+      blocks: b.buffer,
+      geometry: geo
+    }, transferList);
   } else if (m.type === 'lod') {
     const b = generateLODBlockArray(m.cx, m.cz, m.stride, m.size, m.height, m.seaLevel);
-    const geo = buildMeshFromBlocks(b, m.cx * m.size * m.stride, m.cz * m.size * m.stride, m.stride, m.size, m.height, m.seaLevel);
+    const lodSize = Math.ceil(m.size / m.stride);
+    // For LOD, blockWidth and blockDepth are lodSize
+    const geo = buildMeshFromBlocks(b, m.cx * m.size * m.stride, m.cz * m.size * m.stride, m.stride, lodSize, lodSize, m.height, m.seaLevel);
     const transferList = [b.buffer];
     if (geo) transferList.push(geo.positions.buffer, geo.colors.buffer, geo.indices.buffer);
-    self.postMessage({ type: 'lod', id: m.id, generation: m.generation, cx: m.cx, cz: m.cz, lod: m.lod, blocks: b.buffer, geometry: geo }, transferList);
+    self.postMessage({
+      type: 'lod',
+      id: m.id,
+      generation: m.generation,
+      cx: m.cx,
+      cz: m.cz,
+      lod: m.lod,
+      blocks: b.buffer,
+      geometry: geo
+    }, transferList);
   } else if (m.type === 'remesh') {
-    const b = m.blocks;
-    const geo = buildMeshFromBlocks(b, m.cx * m.size, m.cz * m.size, 1, m.size, m.height, m.seaLevel);
+    const b = m.blocks; // b is already a Uint8Array with full size dimensions
+    // For remesh, it's always a full chunk (size x size)
+    const geo = buildMeshFromBlocks(b, m.cx * m.size, m.cz * m.size, 1, m.size, m.size, m.height, m.seaLevel);
     const transferList = [b.buffer];
     if (geo) transferList.push(geo.positions.buffer, geo.colors.buffer, geo.indices.buffer);
-    self.postMessage({ type: 'remesh', id: m.id, generation: m.generation, cx: m.cx, cz: m.cz, blocks: b.buffer, geometry: geo }, transferList);
+    self.postMessage({
+      type: 'remesh',
+      id: m.id,
+      generation: m.generation,
+      cx: m.cx,
+      cz: m.cz,
+      blocks: b.buffer,
+      geometry: geo
+    }, transferList);
   }
 };
 `;

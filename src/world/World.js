@@ -1,9 +1,16 @@
 // world/World.js
 import * as THREE from "three";
-import { CONFIG, strideForLOD, lodForDistance } from "../config.js";
+import {
+  CONFIG,
+  strideForLOD,
+  lodForDistance,
+  forEachHoi4MapChunk,
+  getEffectiveChunkHeight,
+} from "../config.js";
 import { BLOCK_TYPES } from "../blockRegistry.js";
 import { Chunk } from "./Chunk.js";
 import { Mesher } from "./Mesher.js";
+import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 
 export class World {
   constructor(scene, blockMaterial, lodMaterials, mesher) {
@@ -28,6 +35,12 @@ export class World {
     this.onMeshApplied = null;
     this.seed = 0;
     this._lastFullUpdate = 0;
+
+    this.isFinalized = false;
+    this.mergedMesh = null;
+    this._finalizationAttempted = false;
+    this._chunksRequested = 0;
+    this._chunksReady = 0;
   }
 
   init(seed) {
@@ -46,7 +59,6 @@ export class World {
   }
 
   #onWorkerDone(type, id, cx, cz, lod, blocks, geometry) {
-    // Determine which chunk to use
     let chunk;
     if (type === "remesh") {
       chunk = this.getChunk(cx, cz);
@@ -60,11 +72,8 @@ export class World {
       if (type === "full") {
         chunk.blocks = blocks;
       } else if (type === "remesh") {
-        // No need to update blocks; we only need the geometry
-        // But keep the existing blocks intact.
-        // (blocks is null for remesh, but we don't need it)
       } else {
-        blocks = null; // LOD chunk - discard block data
+        blocks = null;
       }
 
       chunk.nextGeometry = geometry;
@@ -109,9 +118,39 @@ export class World {
   }
 
   getBlock(wx, wy, wz) {
+    if (CONFIG.HOI4_MODE.ENABLED) {
+      const size = CONFIG.CHUNK_SIZE;
+      const cx = Math.floor(wx / size);
+      const cz = Math.floor(wz / size);
+      const mode = CONFIG.HOI4_MODE;
+      const ix = cx - mode.MIN_CX;
+      const iz = cz - mode.MIN_CZ;
+      if (ix < 0 || ix >= mode.CHUNKS_X || iz < 0 || iz >= mode.CHUNKS_Z) {
+        return 0;
+      }
+    }
+
+    if (this.isFinalized && CONFIG.HOI4_MODE.ENABLED) {
+      const size = CONFIG.CHUNK_SIZE;
+      const cx = Math.floor(wx / size);
+      const cz = Math.floor(wz / size);
+      const mode = CONFIG.HOI4_MODE;
+      const ix = cx - mode.MIN_CX;
+      const iz = cz - mode.MIN_CZ;
+
+      const isLand = mode.LAND_MASK[iz * mode.CHUNKS_X + ix] === 1;
+      if (isLand) {
+        const waterLevel = CONFIG.SEA_LEVEL;
+        if (wy < waterLevel) return BLOCK_TYPES.WATER;
+        return wy <= waterLevel + 20 ? 1 : 0;
+      }
+
+      return wy < CONFIG.SEA_LEVEL ? BLOCK_TYPES.WATER : 0;
+    }
+
     const size = CONFIG.CHUNK_SIZE;
     if (wy < 0) return BLOCK_TYPES.COBBLESTONE;
-    if (wy >= CONFIG.CHUNK_HEIGHT) return 0;
+    if (wy >= getEffectiveChunkHeight()) return 0;
     const cx = Math.floor(wx / size);
     const cz = Math.floor(wz / size);
     const chunk = this.getChunk(cx, cz);
@@ -139,6 +178,8 @@ export class World {
   }
 
   setBlock(wx, wy, wz, type) {
+    if (this.isFinalized) return false;
+
     const size = CONFIG.CHUNK_SIZE;
     const cx = Math.floor(wx / size);
     const cz = Math.floor(wz / size);
@@ -149,25 +190,20 @@ export class World {
     const idx = (wy * size + lz) * size + lx;
     if (chunk.blocks[idx] === type) return false;
 
-    // Update the block
     chunk.blocks[idx] = type;
     chunk.version++;
 
-    // Mark the primary chunk as dirty and immediately queue it for remeshing
     if (chunk.state === "VISIBLE" || chunk.state === "READY") {
       this.#transitionChunkState(chunk, "DIRTY");
-      // --- FIX: Push to remesh queue immediately so it gets sorted and meshed this frame ---
       if (!this.remeshQueue.includes(chunk)) {
         this.remeshQueue.push(chunk);
       }
     }
 
-    // Mark adjacent chunks as dirty (in case the edit touches a boundary)
     const markDirty = (ncx, ncz) => {
       const n = this.getChunk(ncx, ncz);
       if (n && (n.state === "VISIBLE" || n.state === "READY")) {
         this.#transitionChunkState(n, "DIRTY");
-        // --- FIX: Push neighbors to remesh queue immediately as well ---
         if (!this.remeshQueue.includes(n)) {
           this.remeshQueue.push(n);
         }
@@ -222,9 +258,10 @@ export class World {
   }
 
   update(playerPos, cameraForward) {
+    if (this.isFinalized) return;
+
     const now = performance.now();
 
-    // --- FIX: If there are queued player edits, bypass the 250ms throttle entirely ---
     if (this.remeshQueue.length > 0 || now - this._lastFullUpdate > 250) {
       this.#updateTargetChunks(playerPos, cameraForward);
       this.#queueDirtyChunks();
@@ -233,45 +270,224 @@ export class World {
       this._lastFullUpdate = now;
     }
 
-    // Dispatch workers every frame
     this.#dispatch(6);
+
+    if (
+      CONFIG.HOI4_MODE.ENABLED &&
+      !this.isFinalized &&
+      !this._finalizationAttempted
+    ) {
+      this.#checkAndFinalizeHOI4();
+    }
+  }
+
+  #checkAndFinalizeHOI4() {
+    let allReady = true;
+    let totalChunks = 0;
+    let readyChunks = 0;
+
+    for (const chunk of this.chunks.values()) {
+      totalChunks++;
+      if (chunk.state === "READY" || chunk.state === "VISIBLE") {
+        readyChunks++;
+      } else if (chunk.state !== "UNLOADED" && chunk.state !== "UNLOADING") {
+        allReady = false;
+      }
+    }
+
+    if (totalChunks > 0 && allReady && readyChunks === totalChunks) {
+      console.log(`Finalizing HOI4 world: ${totalChunks} chunks ready`);
+      this.finalizeHoi4World();
+    }
+  }
+
+  #mergeGeometries(geometries) {
+    if (geometries.length === 0) return null;
+    if (geometries.length === 1) return geometries[0].clone();
+
+    let totalVerts = 0;
+    let totalIndices = 0;
+    let hasColor = false;
+    let hasNormal = false;
+
+    for (const geo of geometries) {
+      const pos = geo.attributes.position;
+      if (pos) totalVerts += pos.count;
+
+      const idx = geo.index;
+      if (idx) {
+        totalIndices += idx.count;
+      } else {
+        totalIndices += geo.attributes.position.count;
+      }
+
+      if (geo.attributes.color) hasColor = true;
+      if (geo.attributes.normal) hasNormal = true;
+    }
+
+    const positions = new Float32Array(totalVerts * 3);
+    const colors = hasColor ? new Float32Array(totalVerts * 3) : null; // FIX: use Float32
+    const normals = hasNormal ? new Float32Array(totalVerts * 3) : null;
+    const indices =
+      totalIndices > 65535
+        ? new Uint32Array(totalIndices)
+        : new Uint16Array(totalIndices);
+
+    let posOffset = 0;
+    let idxOffset = 0;
+    let vertOffset = 0;
+
+    for (const geo of geometries) {
+      const pos = geo.attributes.position;
+      const col = geo.attributes.color;
+      const norm = geo.attributes.normal;
+      const idx = geo.index;
+
+      positions.set(pos.array, posOffset);
+      posOffset += pos.array.length;
+
+      if (col && colors) {
+        colors.set(col.array, vertOffset * 3); // col.array is Float32
+      }
+
+      if (norm && normals) {
+        normals.set(norm.array, vertOffset * 3);
+      }
+
+      if (idx) {
+        const arr = idx.array;
+        for (let i = 0; i < arr.length; i++) {
+          indices[idxOffset + i] = arr[i] + vertOffset;
+        }
+        idxOffset += arr.length;
+      } else {
+        for (let i = 0; i < pos.count; i++) {
+          indices[idxOffset + i] = i + vertOffset;
+        }
+        idxOffset += pos.count;
+      }
+
+      vertOffset += pos.count;
+    }
+
+    const merged = new THREE.BufferGeometry();
+    merged.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    if (colors) {
+      merged.setAttribute("color", new THREE.BufferAttribute(colors, 3)); // no normalized flag
+    }
+    if (normals) {
+      merged.setAttribute("normal", new THREE.BufferAttribute(normals, 3));
+    }
+    merged.setIndex(new THREE.BufferAttribute(indices, 1));
+
+    merged.computeBoundingSphere();
+    return merged;
+  }
+
+  finalizeHoi4World() {
+    if (this.chunks.size === 0) {
+      return;
+    }
+
+    const geometries = [];
+
+    for (const chunk of this.chunks.values()) {
+      if (chunk.mesh && chunk.mesh.geometry) {
+        const geo = chunk.mesh.geometry.clone();
+        chunk.mesh.updateMatrix();
+        geo.applyMatrix4(chunk.mesh.matrix);
+        geometries.push(geo);
+      }
+    }
+
+    if (geometries.length > 0) {
+      const mergedGeometry = this.#mergeGeometries(geometries);
+
+      mergedGeometry.computeBoundingSphere();
+      mergedGeometry.computeBoundingBox();
+
+      const mergedMaterial = new THREE.MeshStandardMaterial({
+        vertexColors: true,
+        flatShading: true,
+        roughness: 1.0,
+        metalness: 0.0,
+        shadowSide: THREE.DoubleSide,
+      });
+
+      this.mergedMesh = new THREE.Mesh(mergedGeometry, mergedMaterial);
+
+      this.mergedMesh.castShadow = true;
+      this.mergedMesh.receiveShadow = true;
+
+      this.scene.add(this.mergedMesh);
+    }
+
+    for (const chunk of this.chunks.values()) {
+      if (chunk.mesh) {
+        this.scene.remove(chunk.mesh);
+        chunk.mesh.geometry.dispose();
+        chunk.mesh.material.dispose();
+      }
+      chunk.blocks = null;
+    }
+
+    this.chunks.clear();
+    this.workQueue = [];
+    this.isFinalized = true;
   }
 
   #updateTargetChunks(playerPos, cameraForward) {
     const size = CONFIG.CHUNK_SIZE;
-    const fullRadBlocks = CONFIG.FULL_DETAIL_RADIUS * size;
     const px = playerPos.x,
       pz = playerPos.z;
+
+    // --- EARLY EXIT FOR HOI4 MODE ---
+    if (CONFIG.HOI4_MODE.ENABLED) {
+      // Only request chunks that are strictly inside the map bounds.
+      forEachHoi4MapChunk((cx, cz) => {
+        let chunk = this.getChunk(cx, cz);
+        if (!chunk) {
+          chunk = new Chunk(0, cx, cz);
+          this.setChunk(cx, cz, chunk);
+          this.#transitionChunkState(chunk, "REQUESTED");
+          this.mesher.requestGeneration(chunk);
+        } else if (chunk.state === "UNLOADED" || chunk.state === "UNLOADING") {
+          this.#transitionChunkState(chunk, "REQUESTED");
+          this.mesher.requestGeneration(chunk);
+        }
+      });
+      return; // Stop here – do NOT run the procedural radius loops!
+    }
+
+    // --- BELOW THIS LINE: Procedural world generation (only if HOI4 mode is disabled) ---
+    const fullRadBlocks = CONFIG.FULL_DETAIL_RADIUS * size;
     const playerChunkX = Math.floor(px / size);
     const playerChunkZ = Math.floor(pz / size);
 
-    // 1. Request full detail chunks
     const fullRad = CONFIG.FULL_DETAIL_RADIUS;
     for (let dx = -fullRad; dx <= fullRad; dx++) {
       for (let dz = -fullRad; dz <= fullRad; dz++) {
         if (dx * dx + dz * dz > fullRad * fullRad) continue;
-        const cx = playerChunkX + dx,
-          cz = playerChunkZ + dz;
+        const cx = playerChunkX + dx;
+        const cz = playerChunkZ + dz;
         const centerX = cx * size + size / 2;
         const centerZ = cz * size + size / 2;
         const distSq = (centerX - px) ** 2 + (centerZ - pz) ** 2;
         if (distSq > fullRadBlocks * fullRadBlocks) continue;
         let chunk = this.getChunk(cx, cz);
         if (!chunk) {
-          // Brand new chunk, create and request it.
           chunk = new Chunk(0, cx, cz);
           this.setChunk(cx, cz, chunk);
           this.#transitionChunkState(chunk, "REQUESTED");
           this.mesher.requestGeneration(chunk);
         } else if (chunk.state === "UNLOADED" || chunk.state === "UNLOADING") {
-          // It exists but was unloaded. Re-request it WITHOUT destroying the object.
           this.#transitionChunkState(chunk, "REQUESTED");
           this.mesher.requestGeneration(chunk);
         }
       }
     }
 
-    // 2. Request LOD chunks
+    // LOD rings
     for (let i = 0; i < CONFIG.LOD_RINGS.length; i++) {
       const ring = CONFIG.LOD_RINGS[i];
       const lod = i + 1;
@@ -312,8 +528,8 @@ export class World {
           }
           if (!hasOutsideSubChunk) continue;
 
-          const dxF = centerX - px,
-            dzF = centerZ - pz;
+          const dxF = centerX - px;
+          const dzF = centerZ - pz;
           if (
             dxF * cameraForward.x + dzF * cameraForward.z <
             -(size * stride * 4)
@@ -337,7 +553,7 @@ export class World {
       }
     }
 
-    // 3. --- FIX: Clean, intelligent unloading transitions ---
+    // Target LOD determination
     const getTargetLOD = (cx, cz) => {
       const centerX = cx * size + size / 2;
       const centerZ = cz * size + size / 2;
@@ -348,7 +564,6 @@ export class World {
     const isChunkReady = (state) =>
       ["READY", "VISIBLE", "DIRTY", "REMESH_QUEUED"].includes(state);
 
-    // Checks the correct map depending on what the target LOD should be
     const isTargetReady = (cx, cz, targetLOD) => {
       if (targetLOD === 0) return isChunkReady(this.getChunk(cx, cz)?.state);
       const targetStride = strideForLOD(targetLOD);
@@ -357,66 +572,52 @@ export class World {
       return isChunkReady(this.getLODChunk(targetLOD, tcx, tcz)?.state);
     };
 
-    // 3a. Unload stale Full Detail chunks (LOD 0)
+    // Unload full chunks that can be replaced by LOD
     for (const chunk of this.chunks.values()) {
       if (chunk.state === "UNLOADING" || chunk.state === "UNLOADED") continue;
-
       const targetLOD = getTargetLOD(chunk.coord.x, chunk.coord.z);
-      if (targetLOD === 0) continue; // Keep it, we still need it.
-
-      // If we walked away, only drop this chunk if its LOD replacement is ready, OR if it's completely out of bounds (-1)
+      if (targetLOD === 0) continue;
       if (
         targetLOD === -1 ||
         isTargetReady(chunk.coord.x, chunk.coord.z, targetLOD)
       ) {
         this.#transitionChunkState(chunk, "UNLOADING");
         this.#removeMesh(chunk);
-        // --- FIX: Clear heavy data but KEEP in the map so the loop doesn't crash/insta-request ---
         chunk.blocks = null;
         chunk.nextGeometry = null;
         this.#transitionChunkState(chunk, "UNLOADED");
       }
     }
 
-    // 3b. Unload stale LOD chunks
+    // Unload LOD chunks that are no longer needed
     for (const chunk of this.lodChunks.values()) {
       if (chunk.state === "UNLOADING" || chunk.state === "UNLOADED") continue;
-
       const stride = strideForLOD(chunk.lod);
       let keep = false;
-
-      // Sample 4 points inside the LOD chunk to see if we should keep it
       const testPoints = [
         [0, 0],
         [Math.floor(stride / 2), Math.floor(stride / 2)],
         [stride - 1, 0],
         [0, stride - 1],
       ];
-
       for (const [sx, sz] of testPoints) {
-        const cx = chunk.coord.x * stride + sx; // cx is in LOD 0 coords
+        const cx = chunk.coord.x * stride + sx;
         const cz = chunk.coord.z * stride + sz;
         const targetLOD = getTargetLOD(cx, cz);
-
         if (targetLOD === chunk.lod) {
-          keep = true; // Still within this specific LOD's ring.
+          keep = true;
           break;
         }
-
-        // If the player moved and this chunk needs to transition to a different LOD (higher or lower)...
         if (targetLOD !== -1 && targetLOD !== chunk.lod) {
-          // ...KEEP this chunk visually until the replacement chunk finishes generating.
           if (!isTargetReady(cx, cz, targetLOD)) {
             keep = true;
             break;
           }
         }
       }
-
       if (!keep) {
         this.#transitionChunkState(chunk, "UNLOADING");
         this.#removeMesh(chunk);
-        // --- FIX: Free block data but KEEP in map ---
         chunk.blocks = null;
         chunk.nextGeometry = null;
         this.#transitionChunkState(chunk, "UNLOADED");
@@ -431,7 +632,6 @@ export class World {
         if (!this.remeshQueue.includes(chunk)) this.remeshQueue.push(chunk);
       }
     }
-
     for (const chunk of this.lodChunks.values()) {
       if (chunk.state === "DIRTY") {
         chunk.skipRemesh = true;
@@ -459,14 +659,16 @@ export class World {
       const cx = c.originX + (CONFIG.CHUNK_SIZE * stride) / 2;
       const cz = c.originZ + (CONFIG.CHUNK_SIZE * stride) / 2;
       let distSq = (cx - playerPos.x) ** 2 + (cz - playerPos.z) ** 2;
-      const dirX = cx - playerPos.x,
-        dirZ = cz - playerPos.z;
-      const lenSq = dirX * dirX + dirZ * dirZ;
-      if (lenSq > 0) {
-        const len = Math.sqrt(lenSq);
-        const dot =
-          (dirX / len) * cameraForward.x + (dirZ / len) * cameraForward.z;
-        if (dot < 0.3) distSq += 10000000;
+      if (!CONFIG.HOI4_MODE.ENABLED) {
+        const dirX = cx - playerPos.x,
+          dirZ = cz - playerPos.z;
+        const lenSq = dirX * dirX + dirZ * dirZ;
+        if (lenSq > 0) {
+          const len = Math.sqrt(lenSq);
+          const dot =
+            (dirX / len) * cameraForward.x + (dirZ / len) * cameraForward.z;
+          if (dot < 0.3) distSq += 10000000;
+        }
       }
       return distSq;
     };
@@ -492,7 +694,7 @@ export class World {
         originZ: chunk.originZ,
         scaleXZ,
         size: CONFIG.CHUNK_SIZE,
-        height: CONFIG.CHUNK_HEIGHT,
+        height: getEffectiveChunkHeight(),
         getBlock: (wx, wy, wz) => this.getBlock(wx, wy, wz),
       });
     }
@@ -519,11 +721,11 @@ export class World {
     }
 
     const material = lod > 0 ? this.lodMaterials[lod - 1] : this.blockMaterial;
+
     const mesh = new THREE.Mesh(bufferGeo, material);
     const yOffset = lod > 0 ? -0.02 : 0;
     mesh.position.set(chunk.originX, yOffset, chunk.originZ);
     mesh.renderOrder = chunk.lod > 0 ? -1 : 0;
-
     mesh.castShadow = chunk.lod === 0;
     mesh.receiveShadow = true;
 
@@ -543,18 +745,14 @@ export class World {
 
     let meshedThisFrame = 0;
 
-    // --- Process REMESH (player edits) FIRST with absolute priority ---
     while (meshedThisFrame < maxJobs && this.remeshQueue.length > 0) {
       const chunk = this.remeshQueue.shift();
       if (chunk.state !== "REMESH_QUEUED") continue;
-
-      // Offload remeshing to worker thread
       this.#transitionChunkState(chunk, "GENERATING");
       this.mesher.submitRemesh(chunk);
       meshedThisFrame++;
     }
 
-    // --- Process NEW chunks (background generation) with remaining budget ---
     while (meshedThisFrame < maxJobs && this.meshQueue.length > 0) {
       const chunk = this.meshQueue.shift();
       if (chunk.state !== "MESH_QUEUED") continue;
@@ -566,8 +764,18 @@ export class World {
       meshedThisFrame++;
     }
   }
-  
+
   getStats() {
+    if (this.isFinalized) {
+      return {
+        fullChunks: 0,
+        lodChunks: 0,
+        totalBlocks: this.mergedMesh
+          ? this.mergedMesh.geometry.attributes.position.count / 3
+          : 0,
+        loadedMeshes: this.mergedMesh ? 1 : 0,
+      };
+    }
     return {
       fullChunks: this.chunks.size,
       lodChunks: this.lodChunks.size,
@@ -577,6 +785,16 @@ export class World {
   }
 
   reset() {
+    this.isFinalized = false;
+    this._finalizationAttempted = false;
+
+    if (this.mergedMesh) {
+      this.scene.remove(this.mergedMesh);
+      this.mergedMesh.geometry.dispose();
+      this.mergedMesh.material.dispose();
+      this.mergedMesh = null;
+    }
+
     this.mesher.cancelAll();
     this.meshQueue = [];
     this.remeshQueue = [];

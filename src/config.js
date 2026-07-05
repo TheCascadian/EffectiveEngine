@@ -37,10 +37,26 @@ export function strideForLOD(lod) {
   return lod === 0 ? 1 : CONFIG.LOD_RINGS[lod - 1].stride;
 }
 
+export function getEffectiveChunkHeight() {
+  return CONFIG.HOI4_MODE.ENABLED
+    ? Math.floor(CONFIG.CHUNK_HEIGHT / 8)
+    : CONFIG.CHUNK_HEIGHT;
+}
+
 // ============================================
 // MAIN CONFIGURATION
 // ============================================
 export const CONFIG = {
+  HOI4_MODE: {
+    ENABLED: false, // New flag to enable/disable HOI4 mode
+    MAP_WIDTH: 0,
+    MAP_HEIGHT: 0,
+    LAND_MASK: null,
+    CHUNKS_X: 0,
+    CHUNKS_Z: 0,
+    MIN_CX: 0,
+    MIN_CZ: 0,
+  },
   // World Generation
   CHUNK_SIZE: 32,
   CHUNK_HEIGHT: 1536, // Massive height for floating islands and overhangs
@@ -190,6 +206,66 @@ export const KEYBINDINGS = {
   DEBUG_PANEL: ["F2"],
   FULLSCREEN: ["F11"],
 };
+
+// New function to update HOI4 map dimensions
+export function setHoi4MapDimensions(width, height) {
+  CONFIG.HOI4_MODE.MAP_WIDTH = width;
+  CONFIG.HOI4_MODE.MAP_HEIGHT = height;
+  CONFIG.HOI4_MODE.ENABLED = true; // Automatically enable HOI4 mode when dimensions are set
+}
+
+// Stores which chunk coordinates are land, computed once from the heightmap.
+// mask is a Uint8Array of length chunksX * chunksZ, 1 = land, 0 = water.
+// minCx/minCz are the chunk coordinates the mask origin (index 0,0) corresponds to.
+export function setHoi4LandMask(mask, chunksX, chunksZ, minCx, minCz) {
+  CONFIG.HOI4_MODE.LAND_MASK = mask;
+  CONFIG.HOI4_MODE.CHUNKS_X = chunksX;
+  CONFIG.HOI4_MODE.CHUNKS_Z = chunksZ;
+  CONFIG.HOI4_MODE.MIN_CX = minCx;
+  CONFIG.HOI4_MODE.MIN_CZ = minCz;
+}
+
+export function isHoi4LandChunk(cx, cz) {
+  const mode = CONFIG.HOI4_MODE;
+  if (!mode.ENABLED || !mode.LAND_MASK) return false;
+  const ix = cx - mode.MIN_CX;
+  const iz = cz - mode.MIN_CZ;
+  if (ix < 0 || ix >= mode.CHUNKS_X || iz < 0 || iz >= mode.CHUNKS_Z)
+    return false;
+  return mode.LAND_MASK[iz * mode.CHUNKS_X + ix] === 1;
+}
+
+export function forEachHoi4LandChunk(callback) {
+  const mode = CONFIG.HOI4_MODE;
+  if (!mode.ENABLED || !mode.LAND_MASK) return;
+  for (let iz = 0; iz < mode.CHUNKS_Z; iz++) {
+    for (let ix = 0; ix < mode.CHUNKS_X; ix++) {
+      if (mode.LAND_MASK[iz * mode.CHUNKS_X + ix] === 1) {
+        callback(ix + mode.MIN_CX, iz + mode.MIN_CZ);
+      }
+    }
+  }
+}
+
+export function forEachHoi4MapChunk(callback) {
+  const mode = CONFIG.HOI4_MODE;
+  if (!mode.ENABLED || !mode.LAND_MASK) return;
+  for (let iz = 0; iz < mode.CHUNKS_Z; iz++) {
+    for (let ix = 0; ix < mode.CHUNKS_X; ix++) {
+      callback(ix + mode.MIN_CX, iz + mode.MIN_CZ);
+    }
+  }
+}
+
+// New function to disable HOI4 mode
+export function disableHoi4Mode() {
+  CONFIG.HOI4_MODE.ENABLED = false;
+  CONFIG.HOI4_MODE.MAP_WIDTH = 0;
+  CONFIG.HOI4_MODE.MAP_HEIGHT = 0;
+  CONFIG.HOI4_MODE.LAND_MASK = null;
+  CONFIG.HOI4_MODE.CHUNKS_X = 0;
+  CONFIG.HOI4_MODE.CHUNKS_Z = 0;
+}
 
 // ============================================
 // PERFORMANCE MONITORING

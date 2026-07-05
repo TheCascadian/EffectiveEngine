@@ -6,7 +6,7 @@ export class Renderer {
     this.scene = new THREE.Scene();
 
     // Neutral grey background
-    this.scene.background = new THREE.Color(0x333333);
+    this.scene.background = new THREE.Color(0x87ceeb); // Sky blue
     this.scene.fog = null;
 
     this.camera = new THREE.PerspectiveCamera(
@@ -23,7 +23,9 @@ export class Renderer {
   }
 
   async init() {
-    this.renderer = new WebGPURenderer({ antialias: true });
+    const canvas = document.getElementById("gameCanvas");
+
+    this.renderer = new WebGPURenderer({ canvas, antialias: true });
     await this.renderer.init();
 
     this.renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
@@ -32,13 +34,11 @@ export class Renderer {
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.0;
 
-    // DISABLE SHADOWS COMPLETELY
-    this.renderer.shadowMap.enabled = false;
-
+    // SHADOWS: PCFShadowMapSoft = soft shadow edges with percentage-closer filtering
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(window.innerWidth, window.innerHeight);
-
-    document.body.appendChild(this.renderer.domElement);
 
     return this;
   }

@@ -1,6 +1,11 @@
 // world/Mesher.js
 import * as THREE from "three";
-import { CONFIG, randFromCoords, strideForLOD } from "../config.js";
+import {
+  CONFIG,
+  randFromCoords,
+  strideForLOD,
+  getEffectiveChunkHeight,
+} from "../config.js";
 import { BLOCK_COLORS } from "../blockRegistry.js";
 import { WORKER_SRC } from "../worker.js";
 
@@ -24,6 +29,7 @@ class WorkerPool {
     this.onJobDispatch = onJobDispatch;
     this.freeWorkers = [];
     this.pendingJobs = [];
+    this.allWorkers = [];
     this.generation = 0;
     this.terrainParams = {};
 
@@ -52,7 +58,44 @@ class WorkerPool {
       };
       w.postMessage({ type: "init", seed, blockColors });
       this.freeWorkers.push(w);
+      this.allWorkers.push(w);
     }
+  }
+
+  broadcastHoi4MapData(
+    heightDataBuffer,
+    biomeDataBuffer,
+    width,
+    height,
+    terrainDataBuffer,
+    terrainWidth,
+    terrainHeight,
+  ) {
+    this.allWorkers.forEach((w) => {
+      const heightCopy = heightDataBuffer.slice(0);
+      const terrainCopy = terrainDataBuffer ? terrainDataBuffer.slice(0) : null;
+      const biomeCopy = biomeDataBuffer ? biomeDataBuffer.slice(0) : null;
+
+      const transferables = [heightCopy];
+      if (terrainCopy) transferables.push(terrainCopy);
+      if (biomeCopy) transferables.push(biomeCopy);
+
+      w.postMessage(
+        {
+          type: "set_hoi4_map",
+          width: width,
+          height: height,
+          heightData: heightCopy,
+          biomeData: biomeCopy,
+          terrainData: terrainCopy,
+          terrainWidth: terrainWidth || width,
+          terrainHeight: terrainHeight || height,
+          offsetX: 0,
+          offsetZ: 0,
+        },
+        transferables,
+      );
+    });
   }
 
   submitGeneration(cx, cz, chunkRef) {
@@ -70,7 +113,6 @@ class WorkerPool {
     this.pendingJobs = [];
   }
 
-  // OPTIMIZATION: Increased default dispatch to 4 to better saturate workers
   update(maxDispatch = 4) {
     let dispatched = 0;
     while (
@@ -90,7 +132,7 @@ class WorkerPool {
         lod: job.lod || 0,
         stride: job.stride || 1,
         size: CONFIG.CHUNK_SIZE,
-        height: CONFIG.CHUNK_HEIGHT,
+        height: getEffectiveChunkHeight(),
         seaLevel: CONFIG.SEA_LEVEL,
         terrainParams: this.terrainParams,
         blocks: job.blocks || null,
@@ -137,7 +179,6 @@ export class Mesher {
     height,
     getBlock,
   }) {
-    // OPTIMIZATION: Fast early-exit for completely empty chunks
     if (blocks) {
       let isEmpty = true;
       for (let i = 0; i < blocks.length; i++) {
@@ -150,16 +191,26 @@ export class Mesher {
     }
 
     const blockAt = (x, y, z) => {
-      // OPTIMIZATION: Streamlined boundary check
       if (x >= 0 && x < size && y >= 0 && y < height && z >= 0 && z < size) {
-        if (blocks) return blocks[(y * size + z) * size + x];
+        if (blocks) {
+          return blocks[(y * size + z) * size + x];
+        }
+        if (getBlock) {
+          return getBlock(originX + x * scaleXZ, y, originZ + z * scaleXZ);
+        }
+        return 0;
+      }
+
+      if (getBlock) {
         return getBlock(originX + x * scaleXZ, y, originZ + z * scaleXZ);
       }
-      return y <= 60 ? 7 : 0;
+
+      return 0;
     };
 
     const positions = [],
       colors = [],
+      normals = [],
       indices = [];
     const dims = [size, height, size];
 
@@ -213,11 +264,17 @@ export class Mesher {
               const blockType = Math.abs(c);
               const col = blockColor(blockType);
 
+              let nx = 0,
+                ny = 0,
+                nz = 0;
+              if (d === 0) nx = c > 0 ? 1 : -1;
+              else if (d === 1) ny = c > 0 ? 1 : -1;
+              else nz = c > 0 ? 1 : -1;
+
               const vary = 1.0;
-              let slopeShade = 0.85;
-              if (d === 1) slopeShade = c > 0 ? 1.0 : 0.6;
-              else if (d === 0) slopeShade = 0.75;
-              else slopeShade = 0.8;
+              let slopeShade = 1.0;
+              if (d === 1) slopeShade = c > 0 ? 1.0 : 0.75;
+              else slopeShade = 0.9;
 
               const fColR = Math.round(col[0] * vary * slopeShade * 255);
               const fColG = Math.round(col[1] * vary * slopeShade * 255);
@@ -264,6 +321,7 @@ export class Mesher {
               [p0, p1, p2, p3].forEach((p) => {
                 positions.push(p[0], p[1], p[2]);
                 colors.push(fColR, fColG, fColB);
+                normals.push(nx, ny, nz);
               });
               indices.push(
                 baseIdx,
@@ -296,9 +354,12 @@ export class Mesher {
     bufferGeo.setAttribute(
       "color",
       new THREE.Uint8BufferAttribute(colors, 3, true),
-    ); // 'true' enables normalized colors
+    );
+    bufferGeo.setAttribute(
+      "normal",
+      new THREE.Float32BufferAttribute(normals, 3),
+    );
     bufferGeo.setIndex(new THREE.Uint16BufferAttribute(indices, 1));
-    bufferGeo.computeVertexNormals();
     bufferGeo.computeBoundingSphere();
 
     return bufferGeo;
@@ -339,7 +400,7 @@ export class Mesher {
       type: "remesh",
       cx: chunk.coord.x,
       cz: chunk.coord.z,
-      blocks: chunk.blocks, // Pass the exact block data
+      blocks: chunk.blocks,
       chunkRef: chunk,
     });
   }
